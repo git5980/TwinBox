@@ -1637,6 +1637,47 @@ Material Components 源码移植成本为千级文件 + appcompat 主题基座�
 需要同步的文件：`activity_main.xml` / `menu_main.xml` / `strings.xml` /
 `MainActivity.java` / `InstallActivity.java` + manifest（76 / 2.1.49）。
 
+
+## 2.1.50：容器内卸载不删数据（纯 64 位 guest 的数据目录无人删）
+
+### 现象（用户实测）
+APK 直装容器（物理机未装），容器内卸载后重装——**旧数据还在**（登录态/设置全保留）。
+正常安卓卸载语义 = 数据连根删除，容器必须对齐。
+
+### 根因（三个缺陷叠加）
+1. **位宽门控删错对象**：`VAppManagerService.deletePackageDataAsUser()` 的数据目录删除
+   被 `isPackageSupport32Bit(ps)` 门控。纯 64 位应用（无 32 位 ABI 的现代 APK）
+   `flag=FLAG_RUN_64BIT` → 32 位块整跳过；
+2. **单引擎下 64 位路径是空中楼阁**：TwinBox 只有一个宿主 `dev.twinbox.app`，
+   64 位数据根 ROOT64 = `/data/data/dev.twinbox.app64/virtual`（**不存在的第二宿主目录**），
+   guest 数据无论位宽都实际落在 32 位路径 `virtual/data/user/<id>/<pkg>`
+   （SealedStorage 时代的 sweep 日志是铁证）。64 位桥删除删的是不存在的目录；
+3. **V64BitHelper 路由 bug（上游手滑）**：`call()` 里 `METHODS[5]`（"uninstallPackage"）
+   比较了两次，`METHODS[6]`（"cleanPackageData"）**永远路由不到**，静默返回 null。
+
+三重叠加：纯 64 位 guest 卸载时，实际数据所在目录**没有任何代码去删**。
+
+### 修法（[VAppManagerService.java](third/com/virtual/server/pm/VAppManagerService.java) + [V64BitHelper.java](third/com/virtual/server/bit64/V64BitHelper.java)）
+| # | 改动 | 说明 |
+|---|---|---|
+| 1 | `deletePackageDataAsUser` 去位宽门控 | 数据目录删除一律执行：`user/<id>` + **`user_de`（上游连 32 位都没删过 DE 变体，一并补上）** + 两个 64 位路径变体（幂等，防未来双引擎）。位宽只决定 native lib 位置，不该决定数据删不删 |
+| 2 | `uninstallPackageFully` 去位宽门控 | APK 资源/data-app/odex 目录删除同样无条件 |
+| 3 | `V64BitHelper.call` 路由修复 | `METHODS[5]` 重复比较 → 第二处改 `METHODS[6]`，cleanPackageData 恢复可达 |
+| 4 | 顺手修上游 bug | `userId==-1` 循环里 lib 软链重建用 `userId`（=-1）建目录是错的 → 改用循环变量 `info.id` |
+
+多开语义保护：`uninstallPackageAsUser` 在多分身时只删该 userId 的数据（该语义原样保留）。
+
+### 注意问题
+- **从此卸载 = 数据彻底删除（不可恢复）**。本修复生效前的旧数据在下次卸载该应用时会被清掉——重要数据先在 guest 内自行备份；
+- root 文件管理器路径核对：卸载后 `virtual/data/user/0/<pkg>/`、`virtual/data/user_de/0/<pkg>/`、`virtual/data/app/<pkg>/`、`virtual/vs/<pkg>~外部存储数据` 应全部消失。
+
+### 验证
+9/9：DE/64 变体删除方法编入、cleanPackageData64 路由可达、卸载调用栈日志（2.1.5 幽灵卸载定位器）回归、
+密封器/launcher/UI 直选/autofill 回归无损。真机复现路径：装 → 产生数据 → 容器内卸载 →
+root 文件管理器核对目录消失 → 重装 → 应为全新状态。
+
+需要同步的文件：`VAppManagerService.java` / `V64BitHelper.java` + manifest（77 / 2.1.50）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

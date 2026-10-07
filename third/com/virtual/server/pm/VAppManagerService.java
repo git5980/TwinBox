@@ -685,47 +685,65 @@ public class VAppManagerService extends IAppManager.Stub {
     }
 
     private void deletePackageDataAsUser(int userId, PackageSetting ps, boolean linkLib) {
-        if (isPackageSupport32Bit(ps)) {
-            String libPath = VEnvironment.getAppLibDirectory(ps.packageName).getAbsolutePath();
-            if (userId == -1) {
-                List<VUserInfo> userInfos = VUserManager.get().getUsers();
-                if (userInfos != null) {
-                    for (VUserInfo info : userInfos) {
-                        FileUtils.deleteDir(VEnvironment.getDataUserPackageDirectory(info.id, ps.packageName));
-                        if(linkLib) {
-                            File userLibDir = VEnvironment.getUserAppLibDirectory(userId, ps.packageName);
-                            if (!userLibDir.exists()) {
-                                try {
-                                    FileUtils.createSymlink(libPath, userLibDir.getPath());
-                                    VLog.d(TAG, "createSymlink %s@%d's lib", ps.packageName, userId);
-                                } catch (Exception e) {
-                                    //ignore
-                                }
+        // TwinBox 2.1.50：数据目录删除不再按 32/64 位宽门控。
+        // 根因（用户实测：容器内卸载后重装，数据还在）：
+        // TwinBox 是单引擎宿主——64 位数据根 ROOT64 实际指向
+        // /data/data/dev.twinbox.app64/virtual（不存在的第二宿主目录），
+        // guest 数据无论位宽都落在 32 位路径 virtual/data/user/<id>/<pkg>。
+        // 纯 64 位应用 flag=FLAG_RUN_64BIT 时 isPackageSupport32Bit=false，
+        // 原实现把实际数据所在目录的删除整块跳过，64 位桥删的又是不存在的目录
+        // ——结果谁都没删。位宽只决定 native lib 的存放位置，数据目录删除是
+        // 幂等操作（目录不存在 deleteDir 即 no-op），一律执行。
+        // 同时补上 user_de（DE 存储）目录：上游连 32 位包都没删过这个变体。
+        String libPath = VEnvironment.getAppLibDirectory(ps.packageName).getAbsolutePath();
+        if (userId == -1) {
+            List<VUserInfo> userInfos = VUserManager.get().getUsers();
+            if (userInfos != null) {
+                for (VUserInfo info : userInfos) {
+                    FileUtils.deleteDir(VEnvironment.getDataUserPackageDirectory(info.id, ps.packageName));
+                    FileUtils.deleteDir(VEnvironment.getDeDataUserPackageDirectory(info.id, ps.packageName));
+                    // 64 位路径变体：单引擎下通常不存在，deleteDir 幂等；
+                    // 防未来双引擎场景（64 位目录真被使用时）漏删。
+                    FileUtils.deleteDir(VEnvironment.getDataUserPackageDirectory64(info.id, ps.packageName));
+                    FileUtils.deleteDir(VEnvironment.getDeDataUserPackageDirectory64(info.id, ps.packageName));
+                    if(linkLib) {
+                        // TwinBox 2.1.50：上游此处用 userId（=-1）建 lib 目录是错的，
+                        // 循环变量才是真实用户 id。
+                        File userLibDir = VEnvironment.getUserAppLibDirectory(info.id, ps.packageName);
+                        if (!userLibDir.exists()) {
+                            try {
+                                FileUtils.createSymlink(libPath, userLibDir.getPath());
+                                VLog.d(TAG, "createSymlink %s@%d's lib", ps.packageName, info.id);
+                            } catch (Exception e) {
+                                //ignore
                             }
                         }
-                        // add by lml@xdja.com
-                        {
-                            FileUtils.deleteDir(VEnvironment.getExternalStorageAppDataDir(info.id, ps.packageName));
-                        }
+                    }
+                    // add by lml@xdja.com
+                    {
+                        FileUtils.deleteDir(VEnvironment.getExternalStorageAppDataDir(info.id, ps.packageName));
                     }
                 }
-            } else {
-                FileUtils.deleteDir(VEnvironment.getDataUserPackageDirectory(userId, ps.packageName));
-                if(linkLib) {
-                    File userLibDir = VEnvironment.getUserAppLibDirectory(userId, ps.packageName);
-                    if (!userLibDir.exists()) {
-                        try {
-                            FileUtils.createSymlink(libPath, userLibDir.getPath());
-                            VLog.d(TAG, "createSymlink %s@%d's lib", ps.packageName, userId);
-                        } catch (Exception e) {
-                            //ignore
-                        }
+            }
+        } else {
+            FileUtils.deleteDir(VEnvironment.getDataUserPackageDirectory(userId, ps.packageName));
+            FileUtils.deleteDir(VEnvironment.getDeDataUserPackageDirectory(userId, ps.packageName));
+            FileUtils.deleteDir(VEnvironment.getDataUserPackageDirectory64(userId, ps.packageName));
+            FileUtils.deleteDir(VEnvironment.getDeDataUserPackageDirectory64(userId, ps.packageName));
+            if(linkLib) {
+                File userLibDir = VEnvironment.getUserAppLibDirectory(userId, ps.packageName);
+                if (!userLibDir.exists()) {
+                    try {
+                        FileUtils.createSymlink(libPath, userLibDir.getPath());
+                        VLog.d(TAG, "createSymlink %s@%d's lib", ps.packageName, userId);
+                    } catch (Exception e) {
+                        //ignore
                     }
                 }
-                // add by lml@xdja.com
-                {
-                    FileUtils.deleteDir(VEnvironment.getExternalStorageAppDataDir(userId, ps.packageName));
-                }
+            }
+            // add by lml@xdja.com
+            {
+                FileUtils.deleteDir(VEnvironment.getExternalStorageAppDataDir(userId, ps.packageName));
             }
         }
         if (isPackageSupport64Bit(ps)) {
@@ -765,14 +783,14 @@ public class VAppManagerService extends IAppManager.Stub {
             VJobSchedulerService.get().cancelAll(ps.appId, VUserHandle.USER_ALL);
             VNotificationManagerService.get().cancelAllNotification(packageName, VUserHandle.USER_ALL);
             VActivityManagerService.get().killAppByPkg(packageName, VUserHandle.USER_ALL);
-            if (isPackageSupport32Bit(ps)) {
-                FileUtils.deleteDir(VEnvironment.getPackageResourcePath(packageName));
-                FileUtils.deleteDir(VEnvironment.getPublicResourcePath(packageName));
-                FileUtils.deleteDir(VEnvironment.getDataAppPackageDirectory(packageName));
-                VEnvironment.getOdexFile(packageName).delete();
-                for (int id : VUserManagerService.get().getUserIds()) {
-                    deletePackageDataAsUser(id, ps, false);
-                }
+            // TwinBox 2.1.50：APK 资源/data-app 目录删除同样不再按位宽门控
+            // （单引擎下这些目录就是实际存储位置；deleteDir 幂等）。
+            FileUtils.deleteDir(VEnvironment.getPackageResourcePath(packageName));
+            FileUtils.deleteDir(VEnvironment.getPublicResourcePath(packageName));
+            FileUtils.deleteDir(VEnvironment.getDataAppPackageDirectory(packageName));
+            VEnvironment.getOdexFile(packageName).delete();
+            for (int id : VUserManagerService.get().getUserIds()) {
+                deletePackageDataAsUser(id, ps, false);
             }
             if (isPackageSupport64Bit(ps)) {
                 V64BitHelper.uninstallPackage64(-1, packageName);

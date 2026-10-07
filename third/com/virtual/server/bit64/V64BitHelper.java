@@ -93,7 +93,9 @@ public class V64BitHelper extends ContentProvider {
             return copyPackage64(extras);
         } else if (METHODS[5].equals(method)) {
             return uninstallPackage64(extras);
-        } else if (METHODS[5].equals(method)) {
+        } else if (METHODS[6].equals(method)) {
+            // TwinBox 2.1.50：上游手滑——这里原本又写了一遍 METHODS[5]，
+            // 导致 "cleanPackageData"（METHODS[6]）永远路由不到，静默返回 null。
             return cleanPackageData64(extras);
         }
         return null;
