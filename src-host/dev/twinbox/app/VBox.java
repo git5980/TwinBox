@@ -312,6 +312,15 @@ public class VBox {
         return com.lody.virtual.client.ipc.VDeviceManager.get().getFakeDeviceState(userId);
     }
 
+    /** TwinBox 2.1.52：取分身完整设备配置（编辑器展示/修改用；引擎不可达 null） */
+    public static com.lody.virtual.remote.VDeviceConfig getDeviceConfig(int userId) {
+        try {
+            return com.lody.virtual.client.ipc.VDeviceManager.get().getDeviceConfig(userId);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /**
      * 开/关某分身的设备信息伪装。开启时该分身读到假 IMEI/AndroidId/MAC/SN 等
      * （每个分身独立的一套，随机生成后持久化）；关闭读真机。

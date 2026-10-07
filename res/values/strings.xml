@@ -50,4 +50,22 @@
     <string name="fake_device_toast_on">%1$s · 分身 %2$d 已开启设备伪装</string>
     <string name="fake_device_toast_off">%1$s · 分身 %2$d 已关闭设备伪装</string>
     <string name="fake_device_toast_restart_hint">（运行中请先结束，下次启动生效）</string>
+
+    <!-- TwinBox 2.1.52：伪装编辑器 -->
+    <string name="fake_device_editor_title">设备伪装 · %1$s（分身 %2$d）</string>
+    <string name="fake_device_master_switch">伪装总开关：%1$s（点此切换）</string>
+    <string name="fake_device_edit_hint">常用长度 %1$s 位；留空清除该字段（恢复随机值需重开总开关）</string>
+    <string name="fake_device_save">保存</string>
+    <string name="fake_device_cancel">取消</string>
+    <string name="fake_device_saved">%1$s · 伪装值已保存（下次启动生效）</string>
+    <string name="fake_device_save_fail">保存失败（引擎未响应）</string>
+    <string name="fake_device_cfg_fail">无法读取设备配置</string>
+    <string name="fake_device_toast_on_plain">设备伪装已开启（下次启动生效）</string>
+    <string name="fake_device_toast_off_plain">设备伪装已关闭（下次启动生效）</string>
+    <string name="fake_field_imei">IMEI（getDeviceId）</string>
+    <string name="fake_field_android_id">Android ID</string>
+    <string name="fake_field_wifi_mac">Wi-Fi MAC</string>
+    <string name="fake_field_bt_mac">蓝牙 MAC</string>
+    <string name="fake_field_icc">SIM 序列号（ICCId）</string>
+    <string name="fake_field_serial">序列号（Serial）</string>
 </resources>

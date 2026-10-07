@@ -1726,6 +1726,38 @@ ICCId/Serial/GMS 广告 ID，per-userId 持久化），但 enable 默认 false �
 需要同步的文件：`IDeviceManager.aidl`（va2 仓库）/ `VDeviceManagerService.java` /
 `VDeviceManager.java` / `VBox.java` / `MainActivity.java` / `strings.xml` + manifest（78 / 2.1.51）。
 
+
+## 2.1.52：伪装信息手动编辑（管理页 + 逐字段输入）
+
+### 用户需求
+2.1.51 的伪装值是首开随机生成的——用户要求**可手动修改**（比如指定一台"目标设备"
+的 IMEI/AndroidId，让容器分身完全模拟它）。
+
+### 实现
+- **管理页**（长按 → 设备伪装）：标题行 = 总开关（点按切换，回显状态），
+  下面 6 个字段项各显示当前值：IMEI / AndroidId / WiFi MAC / 蓝牙 MAC /
+  SIM 序列号(ICCId) / Serial；
+- **点字段 → 编辑框**：预填当前值，格式提示（15/16/17/20/11 位），保存走
+  `VDeviceManager.updateDeviceConfig`（引擎侧全量持久化，DeviceInfoPersistenceLayer）；
+  **留空 = 清除该字段**（钩子判 null 自动透传真机值）；
+- **AIDL 零新增**：getDeviceConfig/updateDeviceConfig 本来就在；只加了
+  `VBox.getDeviceConfig()` 门面。
+
+### 注意问题
+1. **生效时机仍是 guest 下次启动**（config 在 bindApplication 应用）；
+2. 编辑器用反射写 `VDeviceConfig` 公有字段（deviceId/androidId/wifiMac/
+   bluetoothMac/iccId/serial——全是 public String，无 setter，反射是唯一路径）；
+3. 总开关切换后**不会**重新随机——身份值一直保留（关闭只是不使用）；
+   想换一套新随机值：先关再开（2.1.51 的 setEnable 语义）；
+4. 格式提示只是提示——引擎不校验（错误的 IMEI 长度/校验位会原样返回给 guest，
+   风控侧可能识别为无效值，用户自己负责）。
+
+### 验证
+9/9：编辑器三方法（showFakeDeviceEditor/editFakeField/applyFakeField）编入、
+strings 全套在、门面在、卸载修复+引擎四修复回归无损。
+
+需要同步的文件：`MainActivity.java` / `VBox.java` / `strings.xml` + manifest（79 / 2.1.52）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

@@ -15,6 +15,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
+import android.widget.EditText;
 import android.widget.GridView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -372,7 +373,7 @@ public class MainActivity extends Activity {
     private void showFakeDevice(final VBox.VAppEntry e) {
         final int[] users = (e.users != null && e.users.length > 0) ? e.users : new int[]{e.userId};
         if (users.length <= 1) {
-            toggleFakeDevice(e.label, users[0]);
+            showFakeDeviceEditor(users[0], e.label);
             return;
         }
         String[] names = new String[users.length];
@@ -387,21 +388,115 @@ public class MainActivity extends Activity {
                 .setItems(names, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
-                        toggleFakeDevice(e.label, users[which]);
+                        showFakeDeviceEditor(users[which], e.label);
                     }
                 })
                 .show();
     }
 
-    private void toggleFakeDevice(String label, int userId) {
-        boolean on = !"on".equals(VBox.fakeDeviceState(userId));
-        VBox.setFakeDevice(userId, on);
-        Toast.makeText(this, on
-                ? getString(R.string.fake_device_toast_on, label, userId)
-                        + getString(R.string.fake_device_toast_restart_hint)
-                : getString(R.string.fake_device_toast_off, label, userId),
-                Toast.LENGTH_LONG).show();
+    /**
+     * TwinBox 2.1.52：设备伪装管理页（状态 + 手动编辑）。
+     * 列出该分身的全套伪装身份：每项显示当前值；标题行带总开关；
+     * 点任意字段弹编辑框（IMEI 15 位数字 / AndroidId 16 位 hex / MAC 格式…按需填），
+     * 保存走 VDeviceManager.updateDeviceConfig（引擎侧持久化）。
+     */
+    private void showFakeDeviceEditor(final int userId, String appLabel) {
+        com.lody.virtual.remote.VDeviceConfig cfg = VBox.getDeviceConfig(userId);
+        if (cfg == null) {
+            Toast.makeText(this, R.string.fake_device_cfg_fail, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final boolean on = cfg.enable;
+        String[][] fields = {
+                {"imei", cfg.deviceId},
+                {"android_id", cfg.androidId},
+                {"wifi_mac", cfg.wifiMac},
+                {"bluetooth_mac", cfg.bluetoothMac},
+                {"sim_serial (iccId)", cfg.iccId},
+                {"serial", cfg.serial},
+        };
+        String[] items = new String[fields.length + 1];
+        items[0] = getString(R.string.fake_device_master_switch,
+                on ? getString(R.string.fake_device_state_on) : getString(R.string.fake_device_state_off));
+        for (int i = 0; i < fields.length; i++) {
+            items[i + 1] = fields[i][0] + "\n" + (fields[i][1] == null ? "" : fields[i][1]);
+        }
+        final com.lody.virtual.remote.VDeviceConfig cfgRef = cfg;
+        new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.fake_device_editor_title, appLabel, userId))
+                .setItems(items, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (which == 0) {
+                            // 总开关
+                            VBox.setFakeDevice(userId, !on);
+                            Toast.makeText(MainActivity.this, !on
+                                    ? R.string.fake_device_toast_on_plain
+                                    : R.string.fake_device_toast_off_plain,
+                                    Toast.LENGTH_SHORT).show();
+                            showFakeDeviceEditor(userId, appLabel);
+                        } else {
+                            editFakeField(userId, appLabel, which - 1, cfgRef);
+                        }
+                    }
+                })
+                .show();
     }
+
+    /** 单字段编辑：预制格式说明 + 输入框（预填当前值） */
+    private void editFakeField(final int userId, final String appLabel, final int fieldIndex,
+                               final com.lody.virtual.remote.VDeviceConfig cfg) {
+        final String[][] meta = {
+                {getString(R.string.fake_field_imei), "15"},
+                {getString(R.string.fake_field_android_id), "16"},
+                {getString(R.string.fake_field_wifi_mac), "17"},
+                {getString(R.string.fake_field_bt_mac), "17"},
+                {getString(R.string.fake_field_icc), "20"},
+                {getString(R.string.fake_field_serial), "11"},
+        };
+        final String[] keys = {"deviceId", "androidId", "wifiMac", "bluetoothMac", "iccId", "serial"};
+        String[] cur = {
+                cfg.deviceId, cfg.androidId, cfg.wifiMac, cfg.bluetoothMac, cfg.iccId, cfg.serial,
+        };
+        final EditText input = new EditText(this);
+        input.setText(cur[fieldIndex] == null ? "" : cur[fieldIndex]);
+        input.setSingleLine(true);
+        new AlertDialog.Builder(this)
+                .setTitle(meta[fieldIndex][0])
+                .setMessage(getString(R.string.fake_device_edit_hint, meta[fieldIndex][1]))
+                .setView(input)
+                .setPositiveButton(R.string.fake_device_save, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        String v = input.getText().toString().trim();
+                        applyFakeField(userId, appLabel, keys[fieldIndex], v);
+                    }
+                })
+                .setNegativeButton(R.string.fake_device_cancel, null)
+                .show();
+    }
+
+    /** 提交到引擎：反射写 config 字段 + updateDeviceConfig 持久化 */
+    private void applyFakeField(int userId, String appLabel, String key, String value) {
+        try {
+            java.lang.reflect.Field f = com.lody.virtual.remote.VDeviceConfig.class.getField(key);
+            // 取该分身最新 config（编辑期间可能被总开关更新过）
+            com.lody.virtual.remote.VDeviceConfig cfg = VBox.getDeviceConfig(userId);
+            if (cfg == null) {
+                Toast.makeText(this, R.string.fake_device_cfg_fail, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            f.set(cfg, value.isEmpty() ? null : value);
+            com.lody.virtual.client.ipc.VDeviceManager.get().updateDeviceConfig(userId, cfg);
+            TLog.i("VBox", "fakeDevice edit userId=" + userId + " " + key + "=" + value);
+            Toast.makeText(this, getString(R.string.fake_device_saved, appLabel), Toast.LENGTH_SHORT).show();
+            showFakeDeviceEditor(userId, appLabel); // 回显新值
+        } catch (Throwable t) {
+            TLog.e("VBox", "fakeDevice edit fail", t);
+            Toast.makeText(this, R.string.fake_device_save_fail, Toast.LENGTH_SHORT).show();
+        }
+    }
+
 
     /**
      * 2.0.8：容器内应用详情。
