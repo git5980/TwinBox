@@ -1,0 +1,9 @@
+<resources>
+    <color name="bg_dark">#FF12141C</color>
+    <color name="bg_card">#FF1D2130</color>
+    <color name="accent">#FF5B8CFF</color>
+    <color name="accent2">#FF8F6BFF</color>
+    <color name="text_primary">#FFF2F4FA</color>
+    <color name="text_secondary">#FF8A93A8</color>
+    <color name="badge_bg">#FF5B8CFF</color>
+</resources>

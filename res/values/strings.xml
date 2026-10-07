@@ -1,0 +1,43 @@
+<resources>
+    <string name="app_name">双生盒</string>
+    <string name="title_install">应用安装</string>
+    <string name="title_bridge">中转</string>
+    <string name="status_ready">双生盒容器引擎已就绪</string>
+    <string name="empty_title">容器是空的</string>
+    <string name="empty_hint">安装 APK 或克隆主空间应用开始使用</string>
+    <string name="btn_install">安装 APK</string>
+    <string name="btn_add_apk">装 APK</string>
+    <string name="btn_clone">克隆应用</string>
+    <string name="btn_float">悬浮球</string>
+    <string name="panel_title">容器应用快捷启动</string>
+    <string name="install_hint">选择主空间应用，一键克隆进双生盒容器</string>
+    <string name="action_clone">克隆</string>
+    <string name="cloned_tag">已在容器</string>
+
+    <!-- TwinBox 2.0.8 新增：工具栏菜单 / 分身选择 / 应用详情 -->
+    <string name="menu_install">安装应用</string>
+    <string name="menu_float">悬浮球</string>
+    <string name="menu_kill_all">结束全部</string>
+    <string name="panel_close">关闭面板</string>
+    <string name="toast_float_on">悬浮球已开启</string>
+    <string name="toast_float_off">悬浮球已关闭</string>
+    <string name="dialog_clone_title">选择要启动的分身</string>
+    <string name="dialog_clone_item">分身 #</string>
+    <string name="dialog_ops_clone">多开一个分身</string>
+    <string name="dialog_ops_kill">结束运行</string>
+    <string name="dialog_ops_uninstall">从容器卸载</string>
+    <string name="dialog_ops_info">应用信息</string>
+    <string name="info_pkg">包名</string>
+    <string name="info_version">版本</string>
+    <string name="info_copies">分身数</string>
+    <string name="info_users">分身 userId</string>
+    <string name="info_apk">容器内 APK</string>
+    <string name="info_host">宿主机同包</string>
+    <string name="info_yes">已安装</string>
+    <string name="info_no">未安装</string>
+    <string name="info_unknown">未知</string>
+    <string name="toast_kill_all">容器内全部应用已结束</string>
+    <string name="toast_no_launcher">该应用在容器内找不到启动入口</string>
+    <string name="toast_picker_missing">未找到文件选择器，请从文件管理器分享 APK 到双生盒</string>
+    <string name="progress_listing">正在读取主空间应用…</string>
+</resources>

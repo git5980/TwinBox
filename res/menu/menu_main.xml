@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox 2.0.8：容器桌面工具栏菜单。
+  原先这三项挂在 Activity.onCreateOptionsMenu 上，但主题 Theme.Material.NoActionBar
+  没有 ActionBar 也没有溢出按钮，目标 SDK 30 又关掉了 legacy 浮动菜单，
+  结果整份菜单永远不显示。现在改由自定义 Toolbar 承载，条目一定可达。
+-->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/menu_install"
+        android:showAsAction="ifRoom|withText"
+        android:title="@string/menu_install" />
+
+    <item
+        android:id="@+id/menu_float"
+        android:showAsAction="ifRoom|withText"
+        android:title="@string/menu_float" />
+
+    <item
+        android:id="@+id/menu_kill_all"
+        android:showAsAction="never"
+        android:title="@string/menu_kill_all" />
+</menu>

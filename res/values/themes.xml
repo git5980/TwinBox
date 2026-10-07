@@ -1,0 +1,19 @@
+<resources>
+    <!--
+      TwinBox 2.0.8：parent 从 Theme.Material.NoActionBar 改为 Theme.Material。
+      MainActivity 的「安装应用 / 悬浮球 / 结束全部」走框架 Options Menu
+      （onCreateOptionsMenu）；NoActionBar 主题下既没有 ActionBar 也没有溢出按钮，
+      targetSdk 30 又关掉 legacy 浮动菜单，整份菜单完全不可达。
+      换成带 ActionBar 的 Theme.Material，让原实现的菜单真正显示出来
+      （MainActivity 的布局也不再需要自摆 Toolbar）。
+    -->
+    <style name="AppTheme" parent="@android:style/Theme.Material">
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorAccent">@color/accent2</item>
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:navigationBarColor">@color/bg_dark</item>
+    </style>
+    <style name="TransparentTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
+    </style>
+</resources>

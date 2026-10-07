@@ -1,0 +1,11 @@
+# 构建产物与本地环境
+build/
+TwinBox-v2.0.apk
+*.idsig
+*.log
+nohup.out
+AndroidManifest.xml
+
+# 运行时标记（设备侧）
+.twinbox_seal_off
+.twinbox_seal_on
