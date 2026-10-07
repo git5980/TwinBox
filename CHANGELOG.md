@@ -1862,6 +1862,44 @@ uint64，层级也有漂移（实证：TwinBox 自签 APK 的 V2 块 dump）。�
 需要同步的文件：`ApkSignatureReader.java`（新增）/ `PackageParserEx.java` +
 manifest（82 / 2.1.55）。
 
+
+## 2.1.56：卸载残留——guest 的「sdcard 视图」无人清理（真机截图实锤）
+
+### 现象（真机 5 张截图）
+卸载后 `/data/data/dev.twinbox.app/virtual/` 下仍有应用残留：
+- `data/user/0/0/`（= `data/data/0/`，软链同目录）里是 guest 视角的
+  **sdcard 根**：`.android`、`.FileManagerRecycler`、`.UTSystemConfig`、
+  `123云盘`、`.com.excean.gspace`、`.MediaTrash`……全是应用在外置存储写的目录；
+- `data/user/1/`（分身）下同样有 `video.player.videoplayer` 与 sdcard 内容。
+
+### 根因
+guest 的共享存储经 IO 重定向落到容器内部，**落点有两套**：
+1. `user/<userId>/<realUserId>/`——重定向历史落点（截图实锤）；
+2. `storage/emulated/<userId>/`——vs 语义路径（`getExternalStorageAppDataDir`
+   删的 `Android/data/<pkg>` 只覆盖这套）。
+
+卸载流程（2.1.50 修过包数据目录）对 sdcard 视图里 app 专属内容
+（`Android/data/<pkg>`、裸包名目录、dot 变体 `.com.excean.gspace`）
+**从来没有清理逻辑**。
+
+### 修法（VAppManagerService.deletePackageDataAsUser）
+两个落点根 × 五条子路径全删：
+`Android/data|obb|media/<pkg>` + `<pkg>`（裸名） + `.<pkg>`（dot 变体）。
+多分身语义保持（按 userId 各自清理）。
+
+### 边界（如实记录）
+- **sdcard 根下 app 自定义名的目录不删**（`123云盘` 这类：归属无法枚举，
+  删错会伤共享内容）——这些只有 guest 自己知道，容器明确放弃；
+- **本版之前的旧残留**：已卸载的应用（PackageSetting 已删）不会再触发
+  卸载流程，旧残留需手动清或重装-再卸载一次（新规则生效）；
+- 卸载路径调用 ensureCreated 系方法可能留下空目录壳（无数据）。
+
+### 验证
+7/8（"sdRoots" 为局部变量名不进 dex，假阴性；特征串 Android/obb、
+Android/media PASS 即清理逻辑在包内）+ 签名修复/2.1.50 卸载/引擎四修复回归无损。
+
+需要同步的文件：`VAppManagerService.java` + manifest（83 / 2.1.56）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

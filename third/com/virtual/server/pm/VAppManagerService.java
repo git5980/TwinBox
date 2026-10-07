@@ -749,6 +749,51 @@ public class VAppManagerService extends IAppManager.Stub {
         if (isPackageSupport64Bit(ps)) {
             V64BitHelper.cleanPackageData64(userId, ps.packageName);
         }
+        // TwinBox 2.1.56：guest 的「sdcard 视图」残留清理。
+        // 实锤（真机截图）：guest 的共享存储落点有两套——
+        //   ① user/<userId>/<realUserId>/（IO 重定向的历史落点，实测 .android、
+        //      123云盘、.FileManagerRecycler 等 sdcard 内容全在这里）；
+        //   ② storage/emulated/<userId>/（vs 语义路径，getExternalStorageAppDataDir
+        //      覆盖的 Android/data/<pkg> 只删过这里）。
+        // 卸载原来只删包数据目录，sdcard 视图里的 app 专属内容（Android/data/<pkg>、
+        // 裸包名目录、dot 变体目录）全数残留。
+        // 清理规则（两个落点根都扫）：
+        //   Android/data|obb|media/<pkg>（规范外存路径）+ <pkg>（裸名）+ .<pkg>（dot 变体）
+        // 不删 sdcard 根下的其他名字（123云盘这类 app 自定义名无法枚举归属，
+        // 删错会伤共享内容——明确放弃，边界如实记录）。
+        String pkg = ps.packageName;
+        // Android 单用户真身恒 0（guest 跑在宿主 uid 下，realUserId()=0）；
+        // 分身 userId 只影响 user/<id>/ 外层目录，sdcard 视图的内层 real 恒为 0。
+        final int realUserId = 0;
+        java.io.File[] sdRoots;
+        if (userId == -1) {
+            List<VUserInfo> allUsers = VUserManager.get().getUsers();
+            sdRoots = new java.io.File[(allUsers != null ? allUsers.size() : 0) * 2];
+            int k = 0;
+            if (allUsers != null) {
+                for (VUserInfo info : allUsers) {
+                    sdRoots[k++] = new java.io.File(VEnvironment.getUserDataDirectory(info.id), String.valueOf(realUserId));
+                    sdRoots[k++] = VEnvironment.getExternalStorageDirectory(info.id);
+                }
+            }
+        } else {
+            sdRoots = new java.io.File[]{
+                    new java.io.File(VEnvironment.getUserDataDirectory(userId), String.valueOf(realUserId)),
+                    VEnvironment.getExternalStorageDirectory(userId),
+            };
+        }
+        String[] subPaths = {
+                "Android/data/" + pkg, "Android/obb/" + pkg, "Android/media/" + pkg,
+                pkg, "." + pkg,
+        };
+        for (java.io.File sdRoot : sdRoots) {
+            if (sdRoot == null || !sdRoot.exists()) {
+                continue;
+            }
+            for (String sub : subPaths) {
+                FileUtils.deleteDir(new java.io.File(sdRoot, sub));
+            }
+        }
         VNotificationManagerService.get().cancelAllNotification(ps.packageName, userId);
         if(userId == 0 || userId == -1) {
             VirtualCore.getConfig().onFirstInstall(ps.packageName, true);
