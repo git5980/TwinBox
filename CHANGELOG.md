@@ -1809,6 +1809,59 @@ app 启停通知无处投递，同理是常态非错误。
 需要同步的文件：`VAppPermissionManagerService.java` / `controllerService.java`
 + manifest（81 / 2.1.54）。
 
+
+## 2.1.55：guest 拿不到签名 → JNI_OnLoad 签名自检 SIGABRT（com.example.ourom）
+
+### 现象（22:44 真机 · 多系统工具箱 com.example.ourom v2.88 · Android 16）
+启动即原生崩溃，tombstone：
+```
+JNI_OnLoad → GetObjectClass(_jobject*)  ← java_object == null → abort
+  #06/#07 pc .../libourom.so（so 内部）
+  #10 new_nativeLoad（我们 native 引擎的 System.loadLibrary 路径，正常透传）
+```
+
+### 根因（与 2.1.45 丢 intent-filter 同根：公开 API 桥的先天缺陷）
+安装解析 `parsePackageModern` 走 `getPackageArchiveInfo`——**archive 模式不收集
+证书**，`pi.signatures` 恒 null。链条：
+1. 安装时 `cache.mSignatures = null` → `savePackageCache` 判 null **不写签名文件**；
+2. guest 查询 `GET_SIGNATURES` → `generatePackageInfo` 懒加载 `readSignature`
+   → 签名文件不存在 → 仍 null；
+3. fallback 查宿主 PM（`getUnHookPackageManager`）→ **宿主没装 ourom**
+   → NameNotFoundException → `pi.signatures` 保持 **null**；
+4. guest 的 libourom.so JNI_OnLoad 签名自检：`sig[0] == null`
+   → `GetObjectClass(null)` → JNI abort。
+
+### 修法（[ApkSignatureReader.java（新增）](third/com/virtual/helper/utils/ApkSignatureReader.java)）
+**APK Signing Block 直读**：EOCD → cdStart → 尾 24B magic "APK Sig Block 42"
+→ pairs 区全量 **X.509 DER 扫描**（30 82 xx xx + 长度自洽 + ≥400B +
+TbsCertificate 双 SEQUENCE 特征 + 去重）。
+
+**为什么是 DER 扫描不是结构化解析**：第一版按 apksig 规范层层剥 LP
+（uint32 对长 → V3 优先 → V2 signer），在真实 APK 上**验证失败**——对长其实是
+uint64，层级也有漂移（实证：TwinBox 自签 APK 的 V2 块 dump）。改用形态扫描后
+与 `apksigner --print-certs` 的证书 sha256 **完全一致**（1cedd7e7…）。
+证书字节形态不随 scheme 结构变化，鲁棒。
+
+**接线两处**（[PackageParserEx.java](third/com/virtual/server/pm/parser/PackageParserEx.java)）：
+| # | 位置 | 说明 |
+|---|---|---|
+| 1 | `parsePackageModern` 安装时 | `pi.signatures` 空 → 从 APK 文件直读（新装应用签名文件正常落盘） |
+| 2 | `generatePackageInfo` 查询兜底 | 宿主未装（NameNotFoundException）→ 从容器 APK 现场读（**2.1.55 之前装入的存量应用免重装即可获得签名**） |
+
+### 边界
+- **V1-only 老包拿不到**（证书在 META-INF/*.RSA 的 PKCS#7 里，不进 Signing Block）；
+  Android 16 上这类 target 老的包本就装不进容器，实际影响为零；
+- 扫描下限 400B：排除 digest（32B）/公钥（~300B）误报；实测 V2+V3 双块
+  同证书去重后恰好一张。
+
+### 验证
+9/9：读取器/魔数/两处 fallback 锚点编入，launcher/卸载/引擎四修复回归无损。
+真机复现路径：升级后直接打开 ourom（**存量应用不用重装**，查询兜底生效）
+——应过 JNI_OnLoad 不再 SIGABRT；`V|PM` 无 `signature read fail` 日志。
+
+需要同步的文件：`ApkSignatureReader.java`（新增）/ `PackageParserEx.java` +
+manifest（82 / 2.1.55）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

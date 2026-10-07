@@ -189,7 +189,18 @@ public class PackageParserEx {
             cache.mVersionCode = (int) vc;
             cache.applicationInfo = ai;
             cache.mAppMetaData = ai.metaData;
-            cache.mSignatures = pi.signatures;
+            // TwinBox 2.1.55：archive 模式（getPackageArchiveInfo）不收集证书，
+            // pi.signatures 恒 null → 签名文件不写 → guest JNI_OnLoad 签名自检
+            // 拿 null（GetObjectClass(null) → SIGABRT，com.example.ourom 实锤）。
+            // 从 APK 的 Signing Block 直读（V3 优先 → V2），与 2.1.45 的
+            // manifest 扫描同思路：公开 API 桥拿不到的自己动手。
+            cache.mSignatures = (pi.signatures != null && pi.signatures.length > 0)
+                    ? pi.signatures
+                    : com.lody.virtual.helper.utils.ApkSignatureReader.read(packageFile);
+            if (cache.mSignatures == null) {
+                VLog.w(TAG, "signature read fail: " + pi.packageName
+                        + " (V2/V3 signing block not found or unparsable)");
+            }
             cache.requestedPermissions = new ArrayList<>();
             if (pi.requestedPermissions != null) {
                 cache.requestedPermissions.addAll(java.util.Arrays.asList(pi.requestedPermissions));
@@ -877,7 +888,15 @@ public class PackageParserEx {
                     PackageInfo outInfo = VirtualCore.get().getUnHookPackageManager().getPackageInfo(p.packageName, PackageManager.GET_SIGNATURES);
                     pi.signatures = outInfo.signatures;
                 } catch (PackageManager.NameNotFoundException e) {
-                    e.printStackTrace();
+                    // TwinBox 2.1.55：宿主未装该包（容器专属应用必然如此）——
+                    // 从容器 APK 文件现场直读 Signing Block（覆盖 2.1.55 之前
+                    // 装入的存量应用，免重装即可获得签名）。
+                    pi.signatures = com.lody.virtual.helper.utils.ApkSignatureReader.read(
+                            new File(VEnvironment.getDataAppPackageDirectory(p.packageName), "base-1.apk"));
+                    if (pi.signatures == null) {
+                        VLog.w(TAG, "signature fallback fail: " + p.packageName);
+                    }
+                } catch (Throwable ignore) {
                 }
             }
         }
