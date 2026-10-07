@@ -1,44 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox Design 2.1.48：安装列表项（icon / label / pkg / action 沿用旧 ID）。
+  变化：卡片化（md 圆角 + 涟漪整行反馈）；操作位改胶囊。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="10dp"
-    android:background="@color/bg_card"
-    android:layout_marginBottom="6dp">
+    android:padding="@dimen/md_space_md"
+    android:background="@drawable/bg_card_ripple"
+    android:layout_marginBottom="@dimen/md_space_sm">
+
     <ImageView
         android:id="@+id/icon"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
+        android:layout_width="46dp"
+        android:layout_height="46dp"
         android:scaleType="fitCenter" />
+
     <LinearLayout
         android:layout_width="0dp"
         android:layout_weight="1"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:layout_marginStart="12dp">
+        android:layout_marginStart="@dimen/md_space_md">
         <TextView
             android:id="@+id/label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="14sp"
+            android:textSize="@dimen/md_type_body"
             android:maxLines="1"
             android:ellipsize="end"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/md_on_surface" />
         <TextView
             android:id="@+id/pkg"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="11sp"
-            android:textColor="@color/text_secondary" />
+            android:layout_marginTop="2dp"
+            android:textSize="@dimen/md_type_caption"
+            android:textColor="@color/md_on_surface_tertiary" />
     </LinearLayout>
+
     <TextView
         android:id="@+id/action"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:textSize="12sp"
-        android:textColor="@color/accent"
+        android:layout_height="36dp"
+        android:gravity="center"
+        android:paddingStart="@dimen/md_space_lg"
+        android:paddingEnd="@dimen/md_space_lg"
+        android:background="@drawable/btn_pill_ghost"
+        android:textSize="@dimen/md_type_label"
+        android:textColor="@color/md_primary"
         android:text="@string/action_clone" />
 </LinearLayout>

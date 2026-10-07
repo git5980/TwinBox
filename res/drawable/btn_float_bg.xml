@@ -1,26 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  TwinBox 2.0.8：悬浮球开关按钮的背景。
-  之前用 android:background="@null"，既没有按下的水波纹，也无法表达「已开启」状态；
-  改成 selector 后 setSelected(true) 就能用亮色底表示悬浮球正在运行。
+  TwinBox Design 2.1.48：悬浮球开关按钮（MD3 图标按钮）。
+  文件名保留 btn_float_bg（历史引用兼容）。
+  状态语义不变：selected=悬浮球运行中（主色实底），否则表面色容器底；
+  外圈涟漪反馈，图形用 ic_grid_apps 矢量（容器桌面）。
 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_selected="true">
-        <shape android:shape="rectangle">
-            <solid android:color="@color/accent" />
-            <corners android:radius="24dp" />
-        </shape>
-    </item>
-    <item android:state_pressed="true">
-        <shape android:shape="rectangle">
-            <solid android:color="@color/bg_card" />
-            <corners android:radius="24dp" />
-        </shape>
+        <ripple android:color="#33FFFFFF">
+            <item>
+                <shape android:shape="oval">
+                    <solid android:color="@color/md_primary" />
+                </shape>
+            </item>
+        </ripple>
     </item>
     <item>
-        <shape android:shape="rectangle">
-            <solid android:color="@color/bg_card" />
-            <corners android:radius="24dp" />
-        </shape>
+        <ripple android:color="@color/md_ripple">
+            <item>
+                <shape android:shape="oval">
+                    <solid android:color="@color/md_surface_container" />
+                    <stroke android:width="1dp" android:color="@color/md_outline" />
+                </shape>
+            </item>
+        </ripple>
     </item>
 </selector>

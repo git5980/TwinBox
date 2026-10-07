@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TwinBox Design：桌面九宫格单元格涟漪（透明底，按下才显色） -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/md_ripple">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="@dimen/md_radius_sm" />
+        </shape>
+    </item>
+</ripple>

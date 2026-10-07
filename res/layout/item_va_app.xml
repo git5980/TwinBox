@@ -1,41 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox Design 2.1.48：桌面应用项（icon / badge / label 沿用旧 ID）。
+  角标改全胶囊（星云紫），标签升 12sp，单元格涟漪由 GridView listSelector 提供。
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:padding="6dp">
+    android:layout_height="match_parent"
+    android:padding="@dimen/md_space_xs"
+    android:background="@drawable/ripple_tile">
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
         android:orientation="vertical"
         android:gravity="center_horizontal">
+
         <FrameLayout
-            android:layout_width="52dp"
-            android:layout_height="52dp">
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+
             <ImageView
                 android:id="@+id/icon"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:scaleType="fitCenter" />
+
             <TextView
                 android:id="@+id/badge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="end"
+                android:translationX="@dimen/md_space_xs"
+                android:translationY="-2dp"
                 android:minWidth="18dp"
+                android:paddingStart="5dp"
+                android:paddingEnd="5dp"
                 android:gravity="center"
-                android:textSize="10sp"
-                android:textColor="#FFFFFFFF"
+                android:textSize="@dimen/md_type_caption"
+                android:textColor="@color/md_on_secondary"
                 android:background="@drawable/badge_bg" />
         </FrameLayout>
+
         <TextView
             android:id="@+id/label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="@dimen/md_space_sm"
             android:gravity="center"
             android:maxLines="1"
             android:ellipsize="end"
-            android:textSize="11sp"
-            android:textColor="@color/text_primary" />
+            android:textSize="@dimen/md_type_label"
+            android:textColor="@color/md_on_surface" />
     </LinearLayout>
 </FrameLayout>

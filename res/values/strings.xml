@@ -12,6 +12,8 @@
     <string name="panel_title">容器应用快捷启动</string>
     <string name="install_hint">选择主空间应用，一键克隆进双生盒容器</string>
     <string name="action_clone">克隆</string>
+    <string name="btn_back">返回</string>
+    <string name="btn_pick_apk">选择 APK</string>
     <string name="cloned_tag">已在容器</string>
 
     <!-- TwinBox 2.0.8 新增：工具栏菜单 / 分身选择 / 应用详情 -->

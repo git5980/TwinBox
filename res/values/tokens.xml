@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox Design 2.1.48：设计令牌层（Material 3 风格，Scheme B「星云蓝」）。
+  单一事实来源：布局与 drawable 一律引用这里，不写死字面值。
+  原色保留在 colors.xml（历史版本引用兼容），新界面全部走本表。
+-->
+<resources>
+    <!-- Surface 表面层 -->
+    <color name="md_surface">#FF12141C</color>
+    <color name="md_surface_container">#FF1D2130</color>
+    <color name="md_surface_container_high">#FF252A3D</color>
+    <color name="md_surface_variant">#FF2A3046</color>
+
+    <!-- Primary 主色（星云蓝） -->
+    <color name="md_primary">#FF5B8CFF</color>
+    <color name="md_primary_dim">#FF3D6BD4</color>
+    <color name="md_on_primary">#FFFFFFFF</color>
+    <color name="md_primary_container">#FF24304F</color>
+
+    <!-- Secondary 次色（星云紫） -->
+    <color name="md_secondary">#FF8F6BFF</color>
+    <color name="md_secondary_dim">#FF6E4CE0</color>
+    <color name="md_on_secondary">#FFFFFFFF</color>
+
+    <!-- 文字 -->
+    <color name="md_on_surface">#FFF2F4FA</color>
+    <color name="md_on_surface_variant">#FF8A93A8</color>
+    <color name="md_on_surface_tertiary">#FF5C6478</color>
+    <color name="md_text_tertiary">#FF5C6478</color>
+
+    <!-- 线条 / 涟漪 -->
+    <color name="md_outline">#FF333A52</color>
+    <color name="md_ripple">#335B8CFF</color>
+
+    <!-- 字阶 -->
+    <dimen name="md_type_display">28sp</dimen>
+    <dimen name="md_type_headline">20sp</dimen>
+    <dimen name="md_type_title">16sp</dimen>
+    <dimen name="md_type_body">14sp</dimen>
+    <dimen name="md_type_label">12sp</dimen>
+    <dimen name="md_type_caption">11sp</dimen>
+
+    <!-- 形状（圆角） -->
+    <dimen name="md_radius_xs">8dp</dimen>
+    <dimen name="md_radius_sm">12dp</dimen>
+    <dimen name="md_radius_md">16dp</dimen>
+    <dimen name="md_radius_lg">20dp</dimen>
+    <dimen name="md_radius_full">999dp</dimen>
+
+    <!-- 间距 -->
+    <dimen name="md_space_xs">4dp</dimen>
+    <dimen name="md_space_sm">8dp</dimen>
+    <dimen name="md_space_md">12dp</dimen>
+    <dimen name="md_space_lg">16dp</dimen>
+    <dimen name="md_space_xl">20dp</dimen>
+    <dimen name="md_space_xxl">24dp</dimen>
+
+    <!-- 控件尺寸 -->
+    <dimen name="md_btn_height">48dp</dimen>
+    <dimen name="md_icon_btn_size">52dp</dimen>
+    <dimen name="md_ball_size">58dp</dimen>
+    <dimen name="md_panel_corner">20dp</dimen>
+</resources>

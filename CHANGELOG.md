@@ -1570,6 +1570,44 @@ IMM 实例」有效；静态缓存一旦被真 binder 占住，IMMS 钩子整条
 > 2.1.46（密封器：`SealedStorage`）；`LocaleFixer` 是含编译错的旧版
 > （`TLog.w` 无 Throwable 重载）。以本 README 上文对应章节的 sha256 为准。
 
+
+## 2.1.48：TwinBox Design——宿主 UI 全面重制（MD3 形状语言，零新依赖）
+
+### 背景与选型
+宿主要求引入 UI 库美化界面。直构链（aapt2+ECJ+d8，无 Gradle）下
+**标准 AAR 不可用**（AAR 内联资源 ID 与外链冲突，属构建体系级限制），
+Material Components 源码移植成本为千级文件 + appcompat 主题基座替换。
+采用第三条路：**自建设计令牌层**——MD3 的 token 体系 + shape/ripple/vector
+全部原生 XML，观感到位且构建链纹丝不动。配色沿用「星云蓝」方案
+（蓝 #5B8CFF / 紫 #8F6BFF / 深空底），只做 token 化精修。
+
+### 落地范围（全部在 res/，Java 零改动——ID 全部沿用）
+| 层 | 文件 | 内容 |
+|---|---|---|
+| 令牌 | `values/tokens.xml`（新增） | 色板（surface×4/primary/secondary/文字×3/描边/涟漪）+ 字阶 6 级 + 圆角 5 档 + 间距 6 档 + 控件尺寸 |
+| 形状 | `drawable/` 新增 9 + 重写 2 | 卡片底/卡片涟漪/面板底（lg 圆角+描边）/单元格局部涟漪/胶囊×4（主/次/弱/文字级）/悬浮球容器/矢量图标×2（四宫格/X） |
+| 布局 | 6 个全部重制 | 容器桌面（底部操作栏：双胶囊+圆图标钮）/ 应用项（全胶囊角标）/ 安装中心（提示进卡片+进度条着色）/ 安装列表项（卡片涟漪+胶囊操作位）/ 悬浮面板 / 悬浮球（58dp 容器+描边环，触达≥48dp） |
+| 主题 | `themes.xml` | 接 `colorControlHighlight`（星云蓝涟漪），ActionBar 结构不变（2.0.8 语义保留） |
+
+### 注意问题
+- **btn_float 状态语义不变**：selected=悬浮球运行中（主色实底）——FloatingService
+  的 setSelected 调用零改动；
+- **悬浮球尺寸 46→58dp**：listener 挂根视图、尺寸来自 WindowManager.LayoutParams
+  （WRAP_CONTENT），拖拽判定不受影响；触摸区变大反而更好用；
+- **vector 图标**（ic_grid_apps/ic_close）依赖 minSdk≥21（本项目 24），
+  aapt2 原生编译，无兼容库依赖；
+- strings.xml 补 `btn_back`/`btn_pick_apk`（原为布局内硬编码字面值）。
+
+### 验证
+- aapt2 资源链接 0 error（首轮抓出 btn_pick_apk 缺失后补齐）；
+- 布局 ID 全量比对脚本通过（6 布局 × 全部旧 ID 在位，Java 引用零改动）；
+- 字节级 15/15：新 drawable/矢量/布局全部编入，arsc 含 md_* 令牌，
+  引擎侧四大修复（密封器/launcher/locale/autofill）回归无损；
+- 签名验证通过。真机观感与触感（涟漪/按压态）待实机确认。
+
+需要同步的文件：`res/` 全目录（tokens/drawable/layouts/strings/themes）+
+`host-manifest-template.xml`（75 / 2.1.48）。Java 引擎层无改动。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

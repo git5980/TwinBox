@@ -1,45 +1,76 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox Design 2.1.48：安装中心。
+  ID 沿用（InstallActivity 零改动）：btn_back / btn_pick_apk /
+  progress_wrap / progress / progress_text / list。
+  变化：提示语进卡片；进度条着色（星云蓝 / 表面变体）；列表项走卡片涟漪。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg_dark">
+    android:background="@color/md_surface">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:padding="12dp">
+        android:paddingStart="@dimen/md_space_md"
+        android:paddingEnd="@dimen/md_space_md"
+        android:paddingTop="@dimen/md_space_sm"
+        android:paddingBottom="@dimen/md_space_sm">
+
         <Button
             android:id="@+id/btn_back"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#36820;&#22238;"
-            android:textColor="@color/text_primary" />
+            android:layout_height="40dp"
+            android:paddingStart="@dimen/md_space_lg"
+            android:paddingEnd="@dimen/md_space_lg"
+            android:background="@drawable/btn_pill_tonal"
+            android:stateListAnimator="@null"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:textAllCaps="false"
+            android:textSize="@dimen/md_type_body"
+            android:textColor="@color/md_on_surface"
+            android:text="@string/btn_back" />
+
         <TextView
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"
             android:gravity="center"
-            android:textSize="16sp"
-            android:textColor="@color/text_primary"
+            android:textSize="@dimen/md_type_title"
+            android:textColor="@color/md_on_surface"
             android:text="@string/title_install" />
+
         <Button
             android:id="@+id/btn_pick_apk"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="APK"
-            android:textColor="@color/text_primary"
-            android:backgroundTint="@color/accent" />
+            android:layout_height="40dp"
+            android:paddingStart="@dimen/md_space_lg"
+            android:paddingEnd="@dimen/md_space_lg"
+            android:background="@drawable/btn_pill_primary"
+            android:stateListAnimator="@null"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:textAllCaps="false"
+            android:textSize="@dimen/md_type_body"
+            android:textColor="@color/md_on_primary"
+            android:text="@string/btn_pick_apk" />
     </LinearLayout>
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="16dp"
-        android:textSize="15sp"
-        android:textColor="@color/text_primary"
+        android:layout_marginStart="@dimen/md_space_lg"
+        android:layout_marginEnd="@dimen/md_space_lg"
+        android:layout_marginBottom="@dimen/md_space_sm"
+        android:padding="@dimen/md_space_md"
+        android:background="@drawable/bg_card"
+        android:textSize="@dimen/md_type_body"
+        android:textColor="@color/md_on_surface_variant"
         android:text="@string/install_hint" />
 
     <LinearLayout
@@ -47,27 +78,36 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingLeft="16dp"
-        android:paddingRight="16dp"
-        android:paddingBottom="8dp"
+        android:paddingStart="@dimen/md_space_lg"
+        android:paddingEnd="@dimen/md_space_lg"
+        android:paddingBottom="@dimen/md_space_sm"
         android:visibility="gone">
         <ProgressBar
             android:id="@+id/progress"
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
+            android:layout_height="wrap_content"
+            android:progressTint="@color/md_primary"
+            android:progressBackgroundTint="@color/md_surface_variant" />
         <TextView
             android:id="@+id/progress_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:textColor="@color/text_secondary" />
+            android:layout_marginTop="@dimen/md_space_xs"
+            android:textSize="@dimen/md_type_label"
+            android:textColor="@color/md_on_surface_variant" />
     </LinearLayout>
 
     <ListView
         android:id="@+id/list"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:padding="8dp"
-        android:divider="@null" />
+        android:paddingStart="@dimen/md_space_md"
+        android:paddingEnd="@dimen/md_space_md"
+        android:paddingBottom="@dimen/md_space_md"
+        android:clipToPadding="false"
+        android:divider="@null"
+        android:dividerHeight="0dp"
+        android:scrollbars="none"
+        android:overScrollMode="never" />
 </LinearLayout>

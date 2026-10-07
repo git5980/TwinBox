@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TwinBox Design：卡片底 + 涟漪（安装列表项用） -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/md_ripple">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/md_surface_container" />
+            <corners android:radius="@dimen/md_radius_md" />
+        </shape>
+    </item>
+</ripple>

@@ -13,6 +13,7 @@
         <item name="android:colorAccent">@color/accent2</item>
         <item name="android:statusBarColor">@color/bg_dark</item>
         <item name="android:navigationBarColor">@color/bg_dark</item>
+        <item name="android:colorControlHighlight">@color/md_ripple</item>
     </style>
     <style name="TransparentTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
     </style>

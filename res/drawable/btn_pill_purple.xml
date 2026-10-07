@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TwinBox Design：次操作胶囊按钮（星云紫） -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/md_secondary_dim" />
+            <corners android:radius="@dimen/md_radius_full" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/md_secondary" />
+            <corners android:radius="@dimen/md_radius_full" />
+        </shape>
+    </item>
+</selector>

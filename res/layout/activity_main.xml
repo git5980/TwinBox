@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox Design 2.1.48：容器桌面（主界面）。
+  结构：状态条 → 九宫格 → 空态 → 底部操作栏（双胶囊 + 悬浮球圆形图标按钮）。
+  ID 全部沿用旧版（MainActivity 零改动）：status / grid / empty /
+  btn_install_empty / btn_add_apk / btn_clone / btn_float。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg_dark">
+    android:background="@color/md_surface">
 
     <!--
       TwinBox 2.0.8：主题从 Theme.Material.NoActionBar 换成 Theme.Material，
@@ -15,83 +21,132 @@
         android:id="@+id/status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="16dp"
-        android:textSize="13sp"
-        android:textColor="@color/text_secondary"
+        android:paddingStart="@dimen/md_space_lg"
+        android:paddingEnd="@dimen/md_space_lg"
+        android:paddingTop="@dimen/md_space_sm"
+        android:paddingBottom="@dimen/md_space_sm"
+        android:textSize="@dimen/md_type_label"
+        android:textColor="@color/md_on_surface_variant"
         android:text="@string/status_ready" />
 
-    <GridView
-        android:id="@+id/grid"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:numColumns="4"
-        android:padding="12dp"
-        android:horizontalSpacing="10dp"
-        android:verticalSpacing="14dp" />
+        android:layout_weight="1">
 
-    <LinearLayout
-        android:id="@+id/empty"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:visibility="gone">
-        <TextView
-            android:layout_width="wrap_content"
+        <GridView
+            android:id="@+id/grid"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:numColumns="4"
+            android:paddingStart="@dimen/md_space_md"
+            android:paddingEnd="@dimen/md_space_md"
+            android:paddingTop="@dimen/md_space_sm"
+            android:paddingBottom="@dimen/md_space_md"
+            android:horizontalSpacing="@dimen/md_space_sm"
+            android:verticalSpacing="@dimen/md_space_md"
+            android:scrollbars="none"
+            android:overScrollMode="never"
+            android:listSelector="@drawable/ripple_tile"
+            android:clipToPadding="false" />
+
+        <LinearLayout
+            android:id="@+id/empty"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="18sp"
-            android:textColor="@color/text_primary"
-            android:text="@string/empty_title" />
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textSize="13sp"
-            android:textColor="@color/text_secondary"
-            android:text="@string/empty_hint" />
-        <Button
-            android:id="@+id/btn_install_empty"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/btn_install"
-            android:textColor="@color/text_primary"
-            android:backgroundTint="@color/accent" />
-    </LinearLayout>
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="@dimen/md_space_xxl">
+
+            <ImageView
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:src="@drawable/ic_grid_apps"
+                android:alpha="0.35" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/md_space_lg"
+                android:textSize="@dimen/md_type_headline"
+                android:textColor="@color/md_on_surface"
+                android:text="@string/empty_title" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/md_space_xs"
+                android:textSize="@dimen/md_type_body"
+                android:textColor="@color/md_on_surface_variant"
+                android:text="@string/empty_hint" />
+
+            <Button
+                android:id="@+id/btn_install_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/md_btn_height"
+                android:layout_marginTop="@dimen/md_space_xl"
+                android:paddingStart="@dimen/md_space_xxl"
+                android:paddingEnd="@dimen/md_space_xxl"
+                android:background="@drawable/btn_pill_primary"
+                android:stateListAnimator="@null"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:textAllCaps="false"
+                android:textSize="@dimen/md_type_body"
+                android:textColor="@color/md_on_primary"
+                android:text="@string/btn_install" />
+        </LinearLayout>
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="10dp"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_card"
+        android:layout_marginStart="@dimen/md_space_md"
+        android:layout_marginEnd="@dimen/md_space_md"
+        android:layout_marginBottom="@dimen/md_space_md"
+        android:padding="@dimen/md_space_sm">
+
         <Button
             android:id="@+id/btn_add_apk"
             android:layout_width="0dp"
+            android:layout_height="@dimen/md_btn_height"
             android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_add_apk"
-            android:textColor="@color/text_primary"
-            android:backgroundTint="@color/accent" />
+            android:background="@drawable/btn_pill_primary"
+            android:stateListAnimator="@null"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:textAllCaps="false"
+            android:textSize="@dimen/md_type_body"
+            android:textColor="@color/md_on_primary"
+            android:text="@string/btn_add_apk" />
+
         <Button
             android:id="@+id/btn_clone"
             android:layout_width="0dp"
+            android:layout_height="@dimen/md_btn_height"
             android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:text="@string/btn_clone"
-            android:textColor="@color/text_primary"
-            android:backgroundTint="@color/accent2" />
+            android:layout_marginStart="@dimen/md_space_sm"
+            android:background="@drawable/btn_pill_purple"
+            android:stateListAnimator="@null"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:textAllCaps="false"
+            android:textSize="@dimen/md_type_body"
+            android:textColor="@color/md_on_secondary"
+            android:text="@string/btn_clone" />
+
         <ImageButton
             android:id="@+id/btn_float"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="10dp"
-            android:src="@android:drawable/ic_menu_more"
+            android:layout_width="@dimen/md_icon_btn_size"
+            android:layout_height="@dimen/md_icon_btn_size"
+            android:layout_marginStart="@dimen/md_space_sm"
             android:background="@drawable/btn_float_bg"
-            android:contentDescription="@string/btn_float"
-            android:scaleType="center" />
+            android:src="@drawable/ic_grid_apps"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/btn_float" />
     </LinearLayout>
 </LinearLayout>

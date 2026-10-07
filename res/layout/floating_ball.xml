@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="46dp"
-    android:layout_height="46dp"
-    android:src="@mipmap/ic_launcher"
-    android:alpha="0.85" />
+<!--
+  TwinBox Design 2.1.48：悬浮球（根视图即 mBall，FloatingService 直接 inflate +
+  setOnTouchListener，ID 无关）。
+  变化：裸图标 → 圆形容器（表面色 + 描边环）+ 居中图标，与面板同一形状语言。
+  尺寸 46dp → 58dp（MD3 目标触达 48dp+），触摸区变大，拖拽判定不受影响
+  （listener 挂在根视图，尺寸来自 WindowManager.LayoutParams）。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="@dimen/md_ball_size"
+    android:layout_height="@dimen/md_ball_size"
+    android:background="@drawable/bg_ball">
+
+    <ImageView
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:src="@mipmap/ic_launcher"
+        android:scaleType="fitCenter" />
+</FrameLayout>

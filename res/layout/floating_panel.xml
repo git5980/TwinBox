@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox Design 2.1.48：悬浮面板（panel_items / panel_close 沿用旧 ID）。
+  变化：lg 圆角 + 描边卡片底；关闭按钮改矢量 X + 涟漪。
+  2.0.8 的历史注释：关闭按钮是新增的（原来面板弹出后无法关闭）。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@color/bg_card"
-    android:padding="8dp">
+    android:background="@drawable/bg_panel"
+    android:padding="@dimen/md_space_sm">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -16,24 +21,22 @@
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:padding="10dp"
-            android:textSize="12sp"
-            android:textColor="@color/text_secondary"
+            android:paddingStart="@dimen/md_space_sm"
+            android:paddingEnd="@dimen/md_space_sm"
+            android:paddingTop="@dimen/md_space_sm"
+            android:paddingBottom="@dimen/md_space_sm"
+            android:textSize="@dimen/md_type_label"
+            android:textColor="@color/md_on_surface_variant"
             android:text="@string/panel_title" />
 
-        <!--
-          TwinBox 2.0.8：新增关闭按钮。
-          原来面板弹出来后唯一的关闭方式是再点一次悬浮球 —— 而悬浮球本身因为
-          ACTION_DOWN 返回 false 根本点不动，等于面板弹出来就关不掉。
-        -->
         <ImageButton
             android:id="@+id/panel_close"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:src="@android:drawable/ic_menu_close_clear_cancel"
-            android:background="@null"
+            android:src="@drawable/ic_close"
+            android:background="@drawable/btn_pill_ghost"
             android:contentDescription="@string/panel_close"
-            android:scaleType="center" />
+            android:scaleType="centerInside" />
     </LinearLayout>
 
     <LinearLayout
