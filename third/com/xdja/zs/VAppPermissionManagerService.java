@@ -134,10 +134,14 @@ public class VAppPermissionManagerService extends IAppPermission.Stub {
         }
         Boolean aBoolean = functionMaps.get(buildKey(packageName, appPermissionName));
         if (aBoolean == null) {
-            VLog.e(TAG, "result is null return false");
+            // TwinBox 2.1.54：策略表查不到是常态（TwinBox 无 MDM 后台，functionMaps
+            // 永远为空）——语义是「无策略 = 不限制」，返回 false（放行）。
+            // 原来打 E 级：番茄小说一次启动刷 30+ 条，全是这一行，还带着
+            // "return false" 的失败观感。降到 D 级一行，带包名和权限名。
+            VLog.d(TAG, "no policy (allow by default): " + packageName + " / " + appPermissionName);
             return false;
         }
-        VLog.e(TAG, "result: " + aBoolean);
+        VLog.d(TAG, "policy result: " + aBoolean);
         return aBoolean;
     }
 

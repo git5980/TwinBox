@@ -185,7 +185,7 @@ public class controllerService extends IController.Stub {
                 mCSCallback.appStart(packageName);
                 VLog.e(Tag, "appStart " + packageName);
             } else {
-                VLog.e(Tag, "mCSCallback is null ");
+                VLog.d(Tag, "mCSCallback is null (no mdm backend, expected)"); // TwinBox 2.1.54: E->D
             }
         }catch (Exception e){
             e.printStackTrace();
@@ -199,7 +199,7 @@ public class controllerService extends IController.Stub {
                 mCSCallback.appStop(packageName);
                 VLog.e(Tag, "appStop " + packageName);
             } else {
-                VLog.e(Tag, "mCSCallback is null ");
+                VLog.d(Tag, "mCSCallback is null (no mdm backend, expected)"); // TwinBox 2.1.54: E->D
             }
         }catch (Exception e){
             e.printStackTrace();
@@ -213,7 +213,7 @@ public class controllerService extends IController.Stub {
                 mCSCallback.appProcessStart(packageName, processName, pid);
                 VLog.e(Tag, "appProcessStart " + packageName + " process : " + processName + pid);
             } else {
-                VLog.e(Tag, "mCSCallback is null ");
+                VLog.d(Tag, "mCSCallback is null (no mdm backend, expected)"); // TwinBox 2.1.54: E->D
             }
         }catch (Exception e){
             e.printStackTrace();
@@ -227,7 +227,7 @@ public class controllerService extends IController.Stub {
                 mCSCallback.appProcessStop(packageName, processName, pid);
                 VLog.e(Tag, "appProcessStop " + packageName + "process : " + processName + pid);
             } else {
-                VLog.e(Tag, "mCSCallback is null ");
+                VLog.d(Tag, "mCSCallback is null (no mdm backend, expected)"); // TwinBox 2.1.54: E->D
             }
         }catch (Exception e){
             e.printStackTrace();

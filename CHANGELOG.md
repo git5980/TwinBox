@@ -1775,6 +1775,40 @@ strings 全套在、门面在、卸载修复+引擎四修复回归无损。
 
 需要同步的文件：`activity_main.xml` / `MainActivity.java` + manifest（80 / 2.1.53）。
 
+
+## 2.1.54：策略桩 E 级噪音清零（真机日志 30/31 复盘）
+
+### 日志复盘（番茄小说 · com.dragon.read · Android 16）
+两份日志（主进程 + :x 引擎）确认 2.1.49–2.1.53 全链路健康：
+- 空态双按钮 → 克隆安装（770 activities 解析）→ launcher 判定
+  `SplashActivity`（manifest 扫描命中）✓
+- 设备伪装开关 + 手动改 MAC/AndroidId/IMEI + 三次启动成功 ✓
+- 划掉任务 FGS 存活（o-stop 检查）✓
+
+### 唯一噪音源：xdja 策略桩
+`VAppPermissionManagerService: result is null return false` 一次启动刷 30+ 条 E 级。
+链路：telephony/bluetooth 各钩子 → `getAppPermissionEnable(pkg, 权限名)` →
+服务端查 `functionMaps`（MDM 策略表）→ **TwinBox 无后台，表永远空 → 查不到 →
+返回 false（= 不限制，放行）**。行为完全正确，只是把"无策略"当"错误"打 E 级。
+同族 `controllerService: mCSCallback is null`（4 处）——无 MDM 后台注册回调，
+app 启停通知无处投递，同理是常态非错误。
+
+### 修法
+- `getAppPermissionEnable`：miss 分支 E → D，日志带包名+权限名
+  （`no policy (allow by default): <pkg> / <perm>`）；命中分支同样 E → D；
+- `controllerService`：4 处 `mCSCallback is null` E → D
+  （`no mdm backend, expected`）。
+
+### 注意
+返回值一行没动——false 语义（放行）保持。若未来接 MDM 策略后台，
+这两处 D 级日志反而是策略未下发的排查锚点。
+
+### 验证
+8/8：新日志串编入、旧 E 级串在 dex 中已消、卸载/伪装/空态/引擎四修复回归无损。
+
+需要同步的文件：`VAppPermissionManagerService.java` / `controllerService.java`
++ manifest（81 / 2.1.54）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术
