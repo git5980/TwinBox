@@ -1900,6 +1900,51 @@ Android/media PASS 即清理逻辑在包内）+ 签名修复/2.1.50 卸载/引�
 
 需要同步的文件：`VAppManagerService.java` + manifest（83 / 2.1.56）。
 
+
+## 2.1.57：数据不出容器三防线（MediaScanner 钩子 + .nomedia + 重开 IO 重定向）
+
+### 背景（用户需求：容器内数据不被系统读取图片/视频/文档）
+审计结论：Context API 路径早隔离（落在容器私有目录，MediaScanner 无权扫）；
+真实泄漏口两个——①native IO 重定向自 2.1.29 起因 Android16 rmdir SIGILL 被关，
+guest 裸路径直写真 sdcard 的内容会进真相册；②MediaScannerConnection.scanFile /
+MediaStore 无任何钩子，guest 可主动请求系统索引真路径。
+（img 镜像方案已评估并否决：无 root 挂载不了、明文 img 挡不住 root、
+mmap 兼容死穴——等效能力由本版三防线 + SealedStorage 提供。）
+
+### 修法（三防线 + native 根治）
+| # | 防线 | 文件 | 说明 |
+|---|---|---|---|
+| 1 | **IO 重定向重开（根治）** | `SandboxFs.cpp`（native） | SIGILL 真凶定位：`match_path` 对空条目读 `path[size-1]` 即 `path[-1]` 越界，arm64 对齐检查直接 SIGILL——**不是 libc hook 本身的锅**。修复：空条目防御 + `strdup` 返回堆指针的悬垂问题（拷回 buffer）。`IO_REDIRECT_ENABLE=false→true`，NDK 29 双 ABI 重编译（arm64 550048B / v7a 367064B，字节级验证入包） |
+| 2 | **MediaScanner 钩子** | `MediaScannerStub`（新增）+ mirror | binder 层接管 "media_scanner" 服务（与 2.1.43 locale 同构）：scanFile/requestScanFile 的路径在容器树内→放行；指向真 sdcard→吞掉 + W 级留痕（`V|MScan`） |
+| 3 | **.nomedia 铺设** | `VActivityManagerService.systemReady()` | 引擎启动幂等铺设：sdcard 视图两落点（user/<id>/<real>/ 与 storage/emulated/<id>/）的数字目录层各放一个；防未来任何扫描机制碰到容器目录 |
+
+### 注意问题
+1. **rmdir SIGILL 修复需真机验证**：guest 内文件管理器删除文件/目录、app 删除缓存——
+   若再现 SIGILL，把 tombstone 发我（新修的两处都在 IO 路径上，有明确日志锚点）；
+2. IO 重定向重开后 **2.1.29 的虚拟存储空目录问题** 已有「目录非空才挂载」守卫，
+   理论无回归，但媒体播放（XPlayer/纯音）务必回归；
+3. MediaScanner 钩子的 insideBox 判定按宿主数据目录前缀——`scanFile(墙外路径)`
+   被吞后 app 自己的相册缩略图可能不刷新（预期行为：墙外路径本就不该由它扫）；
+4. .nomedia 只盖数字目录层（userId/real 层），不盖包目录——避免影响 guest
+   内部显式扫描自己的媒体。
+
+### 验证
+9/9：三防线锚点全在（MediaScannerStub / outside box / V|Nomedia / touchNomedia）、
+disabled 串消失（重开生效）、**新 .so 字节级比对一致**（含修复的双 ABI）、
+卸载/签名/引擎四修复回归无损。
+
+### 真机验证路径（重要）
+1. guest 装回 XPlayer/纯音 → 播放正常（IO 重定向重开的核心回归）；
+2. guest 文件管理器删文件/目录 → 无 SIGILL（native 修复验证）；
+3. guest 里存图片 → 真机相册**看不到**（主线目标）；
+4. `V|MScan` 日志：guest 请求扫描墙外路径时出现 swallowed 留痕；
+5. `user/0/0/.nomedia` 文件存在。
+
+需要同步的文件：`SandboxFs.cpp`（va2）/ `VClient.java` / `MediaScannerStub.java` +
+`MethodProxies.java` + `IMediaScannerService.java`（新增三件）/ `InvocationStubManager.java` /
+`VActivityManagerService.java` + manifest（84 / 2.1.57）。**注意：.so 是重编译的，
+GitHub 上的 va2 仓库需要同步 SandboxFs.cpp 改动。**
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

@@ -1058,7 +1058,12 @@ public final class VClient extends IVClient.Stub {
      * File.delete() 直接杀进程（见 crash-video-player-videoplayer-06_10-00-39-53）。
      * Java 层虚拟化不依赖它；真需要时改 true，并在各 guest 上回归一遍文件删除。
      */
-    private static final boolean IO_REDIRECT_ENABLE = false;
+    // TwinBox 2.1.57：重开（SandboxFs.match_path 空条目越界已修——那才是
+    // Android16 rmdir SIGILL 的元凶，不是 libc hook 本身的锅）。开回后
+    // guest 的裸路径 I/O（/sdcard 直写、native 库直写）被拉进容器目录树，
+    // 配合 MediaScanner 钩子与 .nomedia，数据不出容器。若真机再次出现
+    // SIGILL，先查 add_replace_item 的调用方是否塞了空串。
+    private static final boolean IO_REDIRECT_ENABLE = true;
 
     private HashSet<String> getMountPoints() {
         HashSet<String> mountPoints = new HashSet<>(3);

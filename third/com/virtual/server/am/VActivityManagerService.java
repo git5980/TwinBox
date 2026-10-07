@@ -45,6 +45,7 @@ import com.lody.virtual.helper.utils.ComponentUtils;
 import com.lody.virtual.helper.utils.Singleton;
 import com.lody.virtual.helper.utils.VLog;
 import com.lody.virtual.os.VBinder;
+import com.lody.virtual.os.VEnvironment;
 import com.lody.virtual.os.VUserHandle;
 import com.lody.virtual.remote.AppRunningProcessInfo;
 import com.lody.virtual.remote.AppTaskInfo;
@@ -109,7 +110,66 @@ public class VActivityManagerService extends IActivityManager.Stub {
         return sService.get();
     }
 
+    /** TwinBox 2.1.57：幂等创建 .nomedia（存在即跳过） */
+    private static void touchNomedia(java.io.File dir) {
+        try {
+            java.io.File f = new java.io.File(dir, ".nomedia");
+            if (!f.exists()) {
+                f.createNewFile();
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private static boolean isNumeric(String s) {
+        if (s == null || s.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            if (!Character.isDigit(s.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void systemReady() {
+        // TwinBox 2.1.57：.nomedia 铺设（数据不出容器的保险带）。
+        // 容器 sdcard 视图的两个落点根各放一个 .nomedia：即使 MediaScanner
+        // 因为任何原因（未来 bug / ROM 魔改）碰到容器内部目录，也因
+        // .nomedia 而不索引其中媒体。幂等：已存在则跳过。
+        try {
+            java.io.File dataRoot = VEnvironment.getDataDirectory();
+            java.io.File[] roots = {
+                    new java.io.File(dataRoot, "storage/emulated"),
+                    new java.io.File(dataRoot, "user"),
+            };
+            for (java.io.File root : roots) {
+                if (root == null || !root.isDirectory()) {
+                    continue;
+                }
+                java.io.File[] users = root.listFiles();
+                if (users == null) {
+                    continue;
+                }
+                for (java.io.File u : users) {
+                    if (!u.isDirectory() || !isNumeric(u.getName())) {
+                        continue; // 只处理数字目录（userId 层与 real 层），包目录不盖
+                    }
+                    touchNomedia(u);
+                    java.io.File[] targets = u.listFiles();
+                    if (targets != null) {
+                        for (java.io.File t : targets) {
+                            if (t.isDirectory() && isNumeric(t.getName())) {
+                                touchNomedia(t);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            dev.twinbox.app.TLog.w("V|Nomedia", "lay fail: " + t);
+        }
         // TwinBox 2.1.42：引擎启动扫尾——补封 o-stop 团灭/崩溃留下的明文残余。
         // 后台线程 + 延迟：不阻塞引擎就绪（扫尾不急于这几秒）；仅服务进程执行
         // （此时进程表在 :x，主进程调用 systemReady 也不该碰密封——isServerProcess

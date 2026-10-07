@@ -39,6 +39,7 @@ import com.lody.virtual.client.hook.proxies.libcore.LibCoreStub;
 import com.lody.virtual.client.hook.proxies.locale.LocaleManagerStub;
 import com.lody.virtual.client.hook.proxies.location.LocationManagerStub;
 import com.lody.virtual.client.hook.proxies.media.router.MediaRouterServiceStub;
+import com.lody.virtual.client.hook.proxies.media.scanner.MediaScannerStub;
 import com.lody.virtual.client.hook.proxies.media.session.SessionManagerStub;
 import com.lody.virtual.client.hook.proxies.mount.MountServiceStub;
 import com.lody.virtual.client.hook.proxies.network.NetworkManagementStub;
@@ -158,6 +159,9 @@ public final class InvocationStubManager {
             }
             addInjector(new WindowManagerStub());
             addInjector(new ClipBoardStub());
+            // TwinBox 2.1.57：media_scanner（数据不出容器：guest 主动请求
+            // 扫描墙外路径时吞掉）。与 2.1.43 locale 同构。
+            addInjector(new MediaScannerStub());
             addInjector(new MountServiceStub());
             addInjector(new BackupManagerStub());
             addInjector(new TelephonyStub());
