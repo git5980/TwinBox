@@ -83,11 +83,9 @@
 
             <Button
                 android:id="@+id/btn_install_empty"
-                android:layout_width="wrap_content"
+                android:layout_width="200dp"
                 android:layout_height="@dimen/md_btn_height"
                 android:layout_marginTop="@dimen/md_space_xl"
-                android:paddingStart="@dimen/md_space_xxl"
-                android:paddingEnd="@dimen/md_space_xxl"
                 android:background="@drawable/btn_pill_primary"
                 android:stateListAnimator="@null"
                 android:minWidth="0dp"
@@ -100,6 +98,7 @@
     </FrameLayout>
 
     <LinearLayout
+        android:id="@+id/bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"

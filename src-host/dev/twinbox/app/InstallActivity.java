@@ -79,6 +79,21 @@ public class InstallActivity extends Activity {
                 finish();
             }
         });
+        // TwinBox 2.1.49：主页直接选完 APK 带 Uri 进来——直接执行安装，
+        // 不必加载主空间列表（装完 refreshBoxFlag 自然会刷），也不弹「选择 APK」。
+        if (getIntent() != null && getIntent().hasExtra(MainActivity.EXTRA_INSTALL_URI)) {
+            final String uriStr = getIntent().getStringExtra(MainActivity.EXTRA_INSTALL_URI);
+            getIntent().removeExtra(MainActivity.EXTRA_INSTALL_URI);
+            if (uriStr != null) {
+                mList.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        installFromUri(Uri.parse(uriStr));
+                    }
+                });
+                return;
+            }
+        }
         reloadHostApps();
         // 从主页「装 APK」按钮进来时，直接把文件选择器拉起来
         if (getIntent() != null && getIntent().getBooleanExtra(MainActivity.EXTRA_AUTO_PICK, false)) {

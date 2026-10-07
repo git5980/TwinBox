@@ -1608,6 +1608,35 @@ Material Components 源码移植成本为千级文件 + appcompat 主题基座�
 需要同步的文件：`res/` 全目录（tokens/drawable/layouts/strings/themes）+
 `host-manifest-template.xml`（75 / 2.1.48）。Java 引擎层无改动。
 
+
+## 2.1.49：桌面布局精简（真机反馈三连）+ 空态直选 APK
+
+### 用户反馈（真机截图实测）
+1. 空容器时「安装 APK」出现两次（空态中央 + 底部操作栏），重复；
+2. 顶部 ActionBar 的「安装应用」「悬浮球」与底部操作栏重复，各多一个；
+3. 空态「安装 APK」点击后先跳「克隆应用」界面（InstallActivity）才弹选包——多一次界面切换。
+
+### 修法
+| # | 改动 | 文件 |
+|---|---|---|
+| 1 | **底部操作栏与空态互斥**：空容器时整条隐藏（装 APK / 克隆 / 悬浮球），只留中央空态按钮；装进应用后回来 | `activity_main.xml`（LinearLayout 加 `bottom_bar` ID）+ `MainActivity.reload()`（`mBottomBar.setVisibility`） |
+| 2 | **溢出菜单只留「结束全部」**：删 menu_install / menu_float（与底部重复） | `menu_main.xml` + `MainActivity.onOptionsItemSelected`（同步删死分支，避免 R.id 悬空编译错） |
+| 3 | **空态按钮定宽居中**：wrap→200dp（用户要求「加长居中」语义） | `activity_main.xml` |
+| 4 | **直选 APK**：空态与底部「装 APK」都直接 `ACTION_GET_CONTENT` 拉起选包器；选完带 `EXTRA_INSTALL_URI` 跳 InstallActivity 直接 `installFromUri`（安装/进度/Toast/刷新逻辑零重复，且不再加载主空间列表） | `MainActivity`（pickApk + onActivityResult）+ `InstallActivity`（Uri 分支前置，跳过 reloadHostApps） |
+
+### 注意问题
+- menu 资源删除后 Java 侧 `R.id.menu_install` 引用必须同步清理（ECJ 直接报错，本次已处理）；
+- strings.xml 同步删掉两个死 string，`menu_install`/`menu_float` 在 dex/arsc 均无残留；
+- `EXTRA_AUTO_PICK` 老机制保留（后向兼容，当前无调用方）；
+- 主页 `REQ_PICK_APK=42`（InstallActivity 用 41，互不冲突）。
+
+### 验证
+7/7：菜单双项彻底移除（dex+arsc）、kill_all 保留、底部栏互斥逻辑编入、
+直选包链路（INSTALL_URI）编入、引擎四大修复（密封器/launcher/locale/autofill）回归无损。
+
+需要同步的文件：`activity_main.xml` / `menu_main.xml` / `strings.xml` /
+`MainActivity.java` / `InstallActivity.java` + manifest（76 / 2.1.49）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

@@ -1,21 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  TwinBox 2.0.8：容器桌面工具栏菜单。
-  原先这三项挂在 Activity.onCreateOptionsMenu 上，但主题 Theme.Material.NoActionBar
-  没有 ActionBar 也没有溢出按钮，目标 SDK 30 又关掉了 legacy 浮动菜单，
-  结果整份菜单永远不显示。现在改由自定义 Toolbar 承载，条目一定可达。
+  TwinBox 2.1.49：容器桌面工具栏菜单。
+  「安装应用」「悬浮球」两项已删——与底部操作栏的「装 APK」按钮和
+  悬浮球圆形图标钮完全重复（顶部 ActionBar 与底部同时出现两组，用户
+  实测提出重复）。溢出菜单只留「结束全部」。
+  （2.0.8 历史：菜单曾因 NoActionBar 主题整份不可达，2.0.8 换回
+  Theme.Material 修复——该机制保持不变。）
 -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <item
-        android:id="@+id/menu_install"
-        android:showAsAction="ifRoom|withText"
-        android:title="@string/menu_install" />
-
-    <item
-        android:id="@+id/menu_float"
-        android:showAsAction="ifRoom|withText"
-        android:title="@string/menu_float" />
 
     <item
         android:id="@+id/menu_kill_all"

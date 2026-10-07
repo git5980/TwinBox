@@ -17,8 +17,6 @@
     <string name="cloned_tag">已在容器</string>
 
     <!-- TwinBox 2.0.8 新增：工具栏菜单 / 分身选择 / 应用详情 -->
-    <string name="menu_install">安装应用</string>
-    <string name="menu_float">悬浮球</string>
     <string name="menu_kill_all">结束全部</string>
     <string name="panel_close">关闭面板</string>
     <string name="toast_float_on">悬浮球已开启</string>

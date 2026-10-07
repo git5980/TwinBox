@@ -44,11 +44,17 @@ public class MainActivity extends Activity {
 
     /** InstallActivity 的启动模式：收到后直接拉起 SAF 选文件 */
     public static final String EXTRA_AUTO_PICK = "dev.twinbox.app.extra.AUTO_PICK";
+    /** TwinBox 2.1.49：主页选完 APK 后带 Uri 跳安装中心执行安装 */
+    public static final String EXTRA_INSTALL_URI = "dev.twinbox.app.extra.INSTALL_URI";
+    /** TwinBox 2.1.49：主页自己的选包请求码（InstallActivity 用 41） */
+    private static final int REQ_PICK_APK = 42;
 
     private GridView mGrid;
     private AppAdapter mAdapter;
     private TextView mStatus;
     private LinearLayout mEmpty;
+    // TwinBox 2.1.49：底部操作栏（空容器时整条隐藏，见 reload()）
+    private LinearLayout mBottomBar;
     private ImageButton mFloatBtn;
 
     @Override
@@ -71,6 +77,7 @@ public class MainActivity extends Activity {
         mGrid = (GridView) findViewById(R.id.grid);
         mStatus = (TextView) findViewById(R.id.status);
         mEmpty = (LinearLayout) findViewById(R.id.empty);
+        mBottomBar = (LinearLayout) findViewById(R.id.bottom_bar);
         mFloatBtn = (ImageButton) findViewById(R.id.btn_float);
 
         mAdapter = new AppAdapter();
@@ -91,16 +98,18 @@ public class MainActivity extends Activity {
         findViewById(R.id.btn_install_empty).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                startActivity(new Intent(MainActivity.this, InstallActivity.class));
+                // TwinBox 2.1.49：空态按钮直接拉起 SAF 文件选择器，
+                // 不再先跳「克隆应用」界面（InstallActivity）再二次跳选包。
+                pickApk();
             }
         });
         // TwinBox 2.0.8：这三个按钮此前没有任何监听，纯摆设
         findViewById(R.id.btn_add_apk).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent i = new Intent(MainActivity.this, InstallActivity.class);
-                i.putExtra(EXTRA_AUTO_PICK, true);
-                startActivity(i);
+                // TwinBox 2.1.49：同空态按钮，直接选包（原来是带 EXTRA_AUTO_PICK
+                // 跳 InstallActivity 再自动弹选择器——白闪一次克隆界面）。
+                pickApk();
             }
         });
         findViewById(R.id.btn_clone).setOnClickListener(new View.OnClickListener() {
@@ -258,6 +267,35 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * TwinBox 2.1.49：直接拉起系统文件选择器选 APK（与 InstallActivity.pickApk 同款 intent）。
+     * 选完在 onActivityResult 里带 Uri 跳 InstallActivity 执行安装——
+     * 安装进度/结果 Toast/列表刷新全在 InstallActivity，不在主页重复实现。
+     */
+    private void pickApk() {
+        try {
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            // 与 InstallActivity 一致：部分 OEM 选择器对 APK MIME 返回空，放宽到 */*
+            i.setType("*/*");
+            startActivityForResult(i, REQ_PICK_APK);
+        } catch (Throwable t) {
+            Toast.makeText(this, R.string.toast_picker_missing, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_APK && resultCode == RESULT_OK
+                && data != null && data.getData() != null) {
+            // 带 Uri 跳安装中心执行安装（它有完整的复制/安装/进度/Toast 流程）
+            Intent i = new Intent(this, InstallActivity.class);
+            i.putExtra(EXTRA_INSTALL_URI, data.getData().toString());
+            startActivity(i);
+        }
+    }
+
     private void reload() {
         TLog.i("Main", "reload: listing installed apps...");
         // 2.0.8：VirtualCore.get() 是非空单例，本地判断它非 null 永远成立。
@@ -281,6 +319,10 @@ public class MainActivity extends Activity {
                 + (multi > 0 ? " · " + multi + " 个已多开" : ""));
         mEmpty.setVisibility(apps.isEmpty() ? View.VISIBLE : View.GONE);
         mGrid.setVisibility(apps.isEmpty() ? View.GONE : View.VISIBLE);
+        // TwinBox 2.1.49：底部操作栏与空态互斥——空容器时中间的
+        // 「安装 APK」空态按钮就是唯一入口，底部整条（装 APK / 克隆 / 悬浮球）
+        // 隐藏避免重复；有应用后再回来（克隆/悬浮球此时才有意义）。
+        mBottomBar.setVisibility(apps.isEmpty() ? View.GONE : View.VISIBLE);
     }
 
     private void showOps(final VBox.VAppEntry e) {
@@ -383,13 +425,9 @@ public class MainActivity extends Activity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
-        if (id == R.id.menu_install) {
-            startActivity(new Intent(this, InstallActivity.class));
-            return true;
-        } else if (id == R.id.menu_float) {
-            toggleFloatingBall();
-            return true;
-        } else if (id == R.id.menu_kill_all) {
+        // TwinBox 2.1.49：menu_install / menu_float 两项已删（与底部操作栏
+        // 重复），这里只留「结束全部」。
+        if (id == R.id.menu_kill_all) {
             VBox.killAll();
             Toast.makeText(this, R.string.toast_kill_all, Toast.LENGTH_SHORT).show();
             return true;
