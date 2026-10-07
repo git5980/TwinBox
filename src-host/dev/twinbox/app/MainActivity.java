@@ -332,6 +332,7 @@ public class MainActivity extends Activity {
                         getString(R.string.dialog_ops_clone),
                         getString(R.string.dialog_ops_kill),
                         getString(R.string.dialog_ops_uninstall),
+                        getString(R.string.dialog_ops_fake_device),
                         getString(R.string.dialog_ops_info),
                 }, new DialogInterface.OnClickListener() {
                     @Override
@@ -352,12 +353,54 @@ public class MainActivity extends Activity {
                                 Toast.makeText(MainActivity.this, "卸载失败", Toast.LENGTH_SHORT).show();
                             }
                             reload();
+                        } else if (which == 3) {
+                            showFakeDevice(e);
                         } else {
                             showInfo(e);
                         }
                     }
                 })
                 .show();
+    }
+
+    /**
+     * TwinBox 2.1.51：设备信息伪装（按分身粒度）。
+     * 单分身直接展示开关状态；多分身先选分身再切。
+     * 语义：开 = 该分身读到假 IMEI/AndroidId/MAC/SN（独立随机身份，持久化）；
+     * 关 = 读真机。生效于 guest 下次启动——运行中的建议先结束。
+     */
+    private void showFakeDevice(final VBox.VAppEntry e) {
+        final int[] users = (e.users != null && e.users.length > 0) ? e.users : new int[]{e.userId};
+        if (users.length <= 1) {
+            toggleFakeDevice(e.label, users[0]);
+            return;
+        }
+        String[] names = new String[users.length];
+        for (int i = 0; i < users.length; i++) {
+            names[i] = getString(R.string.fake_device_user_title, users[i],
+                    "on".equals(VBox.fakeDeviceState(users[i]))
+                            ? getString(R.string.fake_device_state_on)
+                            : getString(R.string.fake_device_state_off));
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.fake_device_pick_user, e.label))
+                .setItems(names, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        toggleFakeDevice(e.label, users[which]);
+                    }
+                })
+                .show();
+    }
+
+    private void toggleFakeDevice(String label, int userId) {
+        boolean on = !"on".equals(VBox.fakeDeviceState(userId));
+        VBox.setFakeDevice(userId, on);
+        Toast.makeText(this, on
+                ? getString(R.string.fake_device_toast_on, label, userId)
+                        + getString(R.string.fake_device_toast_restart_hint)
+                : getString(R.string.fake_device_toast_off, label, userId),
+                Toast.LENGTH_LONG).show();
     }
 
     /**

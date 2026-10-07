@@ -40,4 +40,14 @@
     <string name="toast_no_launcher">该应用在容器内找不到启动入口</string>
     <string name="toast_picker_missing">未找到文件选择器，请从文件管理器分享 APK 到双生盒</string>
     <string name="progress_listing">正在读取主空间应用…</string>
+
+    <!-- TwinBox 2.1.51：设备信息伪装 -->
+    <string name="dialog_ops_fake_device">设备伪装</string>
+    <string name="fake_device_user_title">分身 %1$d（%2$s）</string>
+    <string name="fake_device_pick_user">选择分身 · %1$s</string>
+    <string name="fake_device_state_on">伪装中</string>
+    <string name="fake_device_state_off">读真机</string>
+    <string name="fake_device_toast_on">%1$s · 分身 %2$d 已开启设备伪装</string>
+    <string name="fake_device_toast_off">%1$s · 分身 %2$d 已关闭设备伪装</string>
+    <string name="fake_device_toast_restart_hint">（运行中请先结束，下次启动生效）</string>
 </resources>

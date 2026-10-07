@@ -75,6 +75,19 @@ public class VDeviceManager {
         }
     }
 
+    /**
+     * TwinBox 2.1.51：按分身粒度的伪装状态查询（宿主 UI 用）。
+     * 引擎服务不可达时按 off 返回（保守：不虚报开启）。
+     */
+    public String getFakeDeviceState(int userId) {
+        try {
+            String s = getService().getFakeDeviceState(userId);
+            return s != null ? s : "off";
+        } catch (Throwable t) {
+            return "off";
+        }
+    }
+
     public void applyBuildProp(VDeviceConfig config) {
         for (Map.Entry<String, String> entry : config.buildProp.entrySet()) {
             try {

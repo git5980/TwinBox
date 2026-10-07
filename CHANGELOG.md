@@ -1678,6 +1678,54 @@ root 文件管理器核对目录消失 → 重装 → 应为全新状态。
 
 需要同步的文件：`VAppManagerService.java` / `V64BitHelper.java` + manifest（77 / 2.1.50）。
 
+
+## 2.1.51：设备信息伪装（按分身粒度，宿主 UI 接通引擎身份池）
+
+### 背景
+用户问「容器里的 APK 读的手机信息是容器给的吗」——审计结论：默认**不是**。
+引擎（VirtualApp 系）与 VMOS 类虚拟机的本质区别：guest 跑在宿主真实 UID 下，
+binder 直达真系统服务，电话/AndroidId/MAC/传感器等默认全是**真机真值**，
+容器只做「身份翻译」（包名/UID 改写，否则归属校验崩）。
+引擎里躺着完整的假身份池（VDeviceConfig：随机 IMEI/AndroidId/WiFi+蓝牙 MAC/
+ICCId/Serial/GMS 广告 ID，per-userId 持久化），但 enable 默认 false 且
+宿主无任何开关——用户确认需要，本版接通。
+
+### 设计决策：按分身（userId）粒度
+身份池本来就是 per-userId 的（多开防关联的正确粒度：一个分身一套身份）。
+全局开关意义有限（要开就每个分身各自开），故不做全局项。
+
+### 实现（引擎侧全部现成，本版只做接线）
+| 层 | 改动 | 说明 |
+|---|---|---|
+| AIDL | `IDeviceManager.aidl` 加 `getFakeDeviceState(userId)` | 轻量状态查询（避免 UI 为一个布尔拉整个 config） |
+| 服务端 | `VDeviceManagerService.getFakeDeviceState()` | "on"/"off"（config.enable 派生） |
+| 客户端 | `VDeviceManager.getFakeDeviceState()` | 引擎不可达按 off（保守：不虚报开启） |
+| 宿主门面 | `VBox.fakeDeviceState/setFakeDevice` | +TLog 留痕 |
+| UI | 长按菜单第 4 项「设备伪装」 | 单分身直接切换；多分身先选（列表项带当前状态：伪装中/读真机）；Toast 提示生效时机 |
+
+### 生效范围（enable 开启后，guest 侧钩子清单——引擎既有）
+- IMEI/MEID（getDeviceId/getImeiForSlot/getMeidForSlot）、IMSI、SimSerial、
+  Line1Number（telephony + phonesubinfo 两族钩子）
+- ANDROID_ID：SettingsProviderHook（call 拦截，enable+androidId 双条件）
+- Wi-Fi MAC：NativeEngine.redirectFile 把 /sys/class/net/*/address 重定向到假值文件
+- 蓝牙 MAC、Build.SERIAL（applyBuildProp 无条件——唯一默认就在伪造的项）
+- 基站位置（getCellLocation/getAllCellInfo，fake location 联动）
+
+### 注意问题
+1. **生效时机 = guest 下次进程启动**（bindApplication 时 applyBuildProp + 重定向建立）。
+   正在运行的 guest 先「结束运行」再切，UI Toast 已提示；
+2. 身份**首次开启时随机生成并持久化**（persist 后不再变——变了风控反而异常）；
+3. **不是所有读法都能拦**：App 自算的指纹（屏幕分辨率/CPU 型号/传感器特征/安装列表）
+   不在设备身份池内，深度指纹对抗需要 guest 侧配合（未来可扩展 VDeviceConfig.buildProp）；
+4. 多分身各自独立身份——这是防关联的正确姿势（同一 app 双开两份不共享假 IMEI）。
+
+### 验证
+9/9：AIDL 新方法编入、UI 入口/门面在、strings 在、身份池与既有钩子（android_id）回归、
+卸载修复回归、引擎四修复回归。真机验证路径见下。
+
+需要同步的文件：`IDeviceManager.aidl`（va2 仓库）/ `VDeviceManagerService.java` /
+`VDeviceManager.java` / `VBox.java` / `MainActivity.java` / `strings.xml` + manifest（78 / 2.1.51）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

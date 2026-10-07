@@ -69,4 +69,13 @@ public class VDeviceManagerService extends IDeviceManager.Stub {
         }
     }
 
+    /**
+     * TwinBox 2.1.51：按分身（userId）粒度的伪装开关查询——宿主 UI 用。
+     * 返回 "off" / "on"，避免额外 AIDL 往返（config 里没有这个轻量查询）。
+     */
+    @Override
+    public String getFakeDeviceState(int userId) {
+        return getDeviceConfig(userId).enable ? "on" : "off";
+    }
+
 }

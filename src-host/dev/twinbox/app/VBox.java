@@ -305,6 +305,24 @@ public class VBox {
         return VirtualCore.get().uninstallPackage(packageName);
     }
 
+    // ================= TwinBox 2.1.51：设备信息伪装（按分身粒度） =================
+
+    /** 分身 userId 的伪装状态："on" / "off"（引擎不可达按 off） */
+    public static String fakeDeviceState(int userId) {
+        return com.lody.virtual.client.ipc.VDeviceManager.get().getFakeDeviceState(userId);
+    }
+
+    /**
+     * 开/关某分身的设备信息伪装。开启时该分身读到假 IMEI/AndroidId/MAC/SN 等
+     * （每个分身独立的一套，随机生成后持久化）；关闭读真机。
+     * 生效时机：guest 下次进程启动（bindApplication 时应用身份池）——
+     * 正在运行的 guest 建议先结束再切换。
+     */
+    public static void setFakeDevice(int userId, boolean on) {
+        com.lody.virtual.client.ipc.VDeviceManager.get().setEnable(userId, on);
+        TLog.i("VBox", "setFakeDevice userId=" + userId + " on=" + on);
+    }
+
     public static void killAll() {
         VirtualCore.get().killAllApps();
     }
