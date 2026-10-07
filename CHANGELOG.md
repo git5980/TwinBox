@@ -1758,6 +1758,23 @@ strings 全套在、门面在、卸载修复+引擎四修复回归无损。
 
 需要同步的文件：`MainActivity.java` / `VBox.java` / `strings.xml` + manifest（79 / 2.1.52）。
 
+
+## 2.1.53：空态双按钮（克隆入口回归）
+
+### 用户反馈
+2.1.49 空容器时隐藏底部操作栏后，**克隆功能失去了唯一入口**——空态只有
+「安装 APK」一个按钮，想用主空间应用克隆开局的用户被堵死。
+
+### 修法
+空态按钮区改双按钮并排（等宽 weight 平分）：
+- 左「安装 APK」（蓝胶囊，直接拉 SAF 选包——2.1.49 语义不变）；
+- 右「克隆应用」（紫胶囊，新增 `btn_clone_empty` → InstallActivity 主空间列表）。
+
+### 验证
+8/8：新 ID/监听编入、直选 APK/底栏互斥/伪装编辑器/卸载修复回归无损。
+
+需要同步的文件：`activity_main.xml` / `MainActivity.java` + manifest（80 / 2.1.53）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

@@ -104,6 +104,14 @@ public class MainActivity extends Activity {
                 pickApk();
             }
         });
+        // TwinBox 2.1.53：空态双按钮之二——克隆（空容器时底部栏隐藏，
+        // 克隆入口只在这里；克隆需要选主空间应用，走 InstallActivity 列表）。
+        findViewById(R.id.btn_clone_empty).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, InstallActivity.class));
+            }
+        });
         // TwinBox 2.0.8：这三个按钮此前没有任何监听，纯摆设
         findViewById(R.id.btn_add_apk).setOnClickListener(new View.OnClickListener() {
             @Override

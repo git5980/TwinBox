@@ -81,19 +81,43 @@
                 android:textColor="@color/md_on_surface_variant"
                 android:text="@string/empty_hint" />
 
-            <Button
-                android:id="@+id/btn_install_empty"
-                android:layout_width="200dp"
-                android:layout_height="@dimen/md_btn_height"
+            <!-- TwinBox 2.1.53：空态双按钮并排（用户反馈：空容器时克隆也要有入口——
+                 2.1.49 隐藏底部栏后克隆只在这里出现）。等宽平分，蓝主紫次。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/md_space_xl"
-                android:background="@drawable/btn_pill_primary"
-                android:stateListAnimator="@null"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:textAllCaps="false"
-                android:textSize="@dimen/md_type_body"
-                android:textColor="@color/md_on_primary"
-                android:text="@string/btn_install" />
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_install_empty"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/md_btn_height"
+                    android:layout_weight="1"
+                    android:background="@drawable/btn_pill_primary"
+                    android:stateListAnimator="@null"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:textAllCaps="false"
+                    android:textSize="@dimen/md_type_body"
+                    android:textColor="@color/md_on_primary"
+                    android:text="@string/btn_install" />
+
+                <Button
+                    android:id="@+id/btn_clone_empty"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/md_btn_height"
+                    android:layout_weight="1"
+                    android:layout_marginStart="@dimen/md_space_sm"
+                    android:background="@drawable/btn_pill_purple"
+                    android:stateListAnimator="@null"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:textAllCaps="false"
+                    android:textSize="@dimen/md_type_body"
+                    android:textColor="@color/md_on_secondary"
+                    android:text="@string/btn_clone" />
+            </LinearLayout>
         </LinearLayout>
     </FrameLayout>
 
