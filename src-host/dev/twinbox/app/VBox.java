@@ -1,4 +1,6 @@
+
 package dev.twinbox.app;
+
 
 import android.content.Context;
 import android.content.Intent;
@@ -9,6 +11,13 @@ import android.graphics.drawable.Drawable;
 
 import com.lody.virtual.remote.InstallOptions;
 import com.lody.virtual.remote.InstallResult;
+import android.app.ActivityManager;
+import android.app.ActivityOptions;
+
+import android.graphics.Rect;
+import android.os.Build;
+import android.view.WindowManager;
+
 import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.remote.AppRunningProcessInfo;
@@ -334,6 +343,128 @@ public class VBox {
 
     public static void killAll() {
         VirtualCore.get().killAllApps();
+    }
+
+    /**
+     * TwinBox 2.1.64：运行中的容器 task 列表（宿主 UI 用）。
+     * taskId 是系统侧真实 id（可直接 moveTaskToFront）；
+     * 包名从 baseIntent/topActivity 提取。
+     */
+    public static List<com.lody.virtual.remote.AppTaskInfo> runningTasks() {
+        List<com.lody.virtual.remote.AppTaskInfo> out =
+                new ArrayList<com.lody.virtual.remote.AppTaskInfo>();
+        try {
+            for (Integer userId : engineUserIds()) {
+                for (com.lody.virtual.remote.AppTaskInfo ti
+                        : com.lody.virtual.client.ipc.VActivityManager.get().getRunningTasks(userId)) {
+                    if (pkgOf(ti) != null) {
+                        out.add(ti);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            TLog.w("VBox", "runningTasks fail: " + t);
+        }
+        return out;
+    }
+
+    private static String pkgOf(com.lody.virtual.remote.AppTaskInfo ti) {
+        if (ti.baseIntent != null && ti.baseIntent.getComponent() != null) {
+            return ti.baseIntent.getComponent().getPackageName();
+        }
+        if (ti.topActivity != null) {
+            return ti.topActivity.getPackageName();
+        }
+        if (ti.baseActivity != null) {
+            return ti.baseActivity.getPackageName();
+        }
+        return null;
+    }
+
+    /** 供 runningTaskIds 用：引擎里的分身 userId 集合（0 + 已建分身） */
+    private static List<Integer> engineUserIds() {
+        List<Integer> out = new ArrayList<Integer>();
+        try {
+            for (VAppEntry e : listInstalled()) {
+                if (e.users != null) {
+                    for (int u : e.users) {
+                        if (!out.contains(u)) {
+                            out.add(u);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        if (out.isEmpty()) {
+            out.add(0);
+        }
+        return out;
+    }
+
+    /**
+     * TwinBox 2.1.64：把容器应用 task 以 freeform 小窗调出（VMOS 式）。
+     * windowing 切换：FREEFORM 小窗 ⇄ FULLSCREEN 全屏。
+     * REORDER_TASKS（normal 权限）允许宿主移动自己名义的 task
+     * （guest task 以 stub 名义注册，归属宿主）。
+     * ColorOS 不放行 freeform 时回退为全屏调出（不失败，只降级）。
+     *
+     * @param ctx    宿主 context
+     * @param taskId 系统侧真实 task id
+     * @param toFreeform true=小窗；false=全屏
+     * @return 实际生效的模式（"freeform"/"fullscreen"/"fail"）
+     */
+    public static String showTaskInWindow(Context ctx, int taskId, boolean toFreeform) {
+        try {
+            ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) {
+                return "fail";
+            }
+            ActivityOptions opts = ActivityOptions.makeBasic();
+            // TwinBox 2.1.64：setLaunchWindowingMode 走反射——编译期 ECJ
+            // 解析 android-34 时报 undefined（方法 API 31+，平台 jar 里可能
+            // 被 @hide 或签名差异挡了）。反射 + 运行时探测更稳：ColorOS
+            // 不放行 freeform 时降级全屏，调用点已兜底。
+            boolean winOk = setWindowing(opts, toFreeform ? 5 /* FREEFORM */ : 1 /* FULLSCREEN */);
+            if (toFreeform && winOk) {
+                WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+                android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+                wm.getDefaultDisplay().getRealMetrics(dm);
+                int w = (int) (dm.widthPixels * 0.72f);
+                int h = (int) (dm.heightPixels * 0.78f);
+                int x = dm.widthPixels - w;
+                int y = (int) (dm.heightPixels * 0.06f);
+                opts.setLaunchBounds(new Rect(x, y, x + w, y + h));
+            }
+            am.moveTaskToFront(taskId, 0, opts.toBundle());
+            TLog.i("VBox", "moveTaskToFront taskId=" + taskId
+                    + " freeform=" + toFreeform + " winOk=" + winOk);
+            return toFreeform && winOk ? "freeform" : "fullscreen";
+        } catch (Throwable t) {
+            TLog.w("VBox", "freeform moveTaskToFront fail (fallback fullscreen): " + t);
+            // ColorOS 拒 freeform 时降级：普通调出（窗口模式随系统）
+            try {
+                ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
+                am.moveTaskToFront(taskId, 0);
+                return "fullscreen";
+            } catch (Throwable t2) {
+                TLog.e("VBox", "moveTaskToFront total fail", t2);
+                return "fail";
+            }
+        }
+    }
+
+    /** 反射调 ActivityOptions.setLaunchWindowingMode（API 31+，@hide 风险规避） */
+    private static boolean setWindowing(ActivityOptions opts, int mode) {
+        try {
+            java.lang.reflect.Method m = ActivityOptions.class
+                    .getMethod("setLaunchWindowingMode", int.class);
+            m.invoke(opts, mode);
+            return true;
+        } catch (Throwable t) {
+            TLog.w("VBox", "setLaunchWindowingMode unavailable: " + t);
+            return false;
+        }
     }
 
     /** 容器内已装应用（含每个包的分身数） */

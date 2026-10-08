@@ -277,15 +277,78 @@ public class FloatingService extends Service {
             TLog.e("Float", "listInstalled fail", t);
         }
         LinearLayout box = (LinearLayout) mDrawer.findViewById(R.id.panel_items);
+        box.removeAllViews();
+
+        // ---- TwinBox 2.1.64：运行中区（VMOS 式小窗调出）----
+        // 拖出把手时实时列出运行中容器应用；点按 = 小窗 ⇄ 全屏切换。
+        List<com.lody.virtual.remote.AppTaskInfo> running = VBox.runningTasks();
+        if (!running.isEmpty()) {
+            TextView head = new TextView(this);
+            head.setText("运行中 · 点按小窗/全屏");
+            head.setTextColor(0xFF8A93A8);
+            head.setTextSize(12);
+            head.setPadding(28, 22, 28, 6);
+            box.addView(head);
+            java.util.Map<String, VBox.VAppEntry> byPkg = new java.util.HashMap<String, VBox.VAppEntry>();
+            if (apps != null) {
+                for (VBox.VAppEntry e : apps) {
+                    byPkg.put(e.packageName, e);
+                }
+            }
+            int shownRun = 0;
+            for (final com.lody.virtual.remote.AppTaskInfo ti : running) {
+                if (shownRun >= 5) {
+                    break;
+                }
+                String pkg = ti.baseIntent != null && ti.baseIntent.getComponent() != null
+                        ? ti.baseIntent.getComponent().getPackageName()
+                        : (ti.topActivity != null ? ti.topActivity.getPackageName() : "?");
+                VBox.VAppEntry e = byPkg.get(pkg);
+                String label = e != null && e.label != null ? e.label : pkg;
+                TextView item = new TextView(this);
+                item.setText(label + " ▦");
+                item.setTextColor(0xFF5B8CFF);
+                item.setPadding(28, 22, 28, 22);
+                item.setTextSize(14);
+                // 小窗 ⇄ 全屏 toggle：点一下从边缘拉出小窗，再点全屏，再点小窗
+                item.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        boolean toFreeform = !v.isSelected();
+                        v.setSelected(toFreeform);
+                        String r = VBox.showTaskInWindow(FloatingService.this, ti.taskId, toFreeform);
+                        Toast.makeText(FloatingService.this,
+                                "freeform".equals(r) ? "小窗已拉出（再点全屏）"
+                                        : "fullscreen".equals(r) ? "已切全屏（再点回小窗）" : "调出失败",
+                                Toast.LENGTH_SHORT).show();
+                        if ("fail".equals(r)) {
+                            v.setSelected(false);
+                        }
+                    }
+                });
+                box.addView(item);
+                shownRun++;
+            }
+        }
+
+        // ---- 启动区（原功能保留）----
         if (apps == null || apps.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("容器内暂无应用");
-            empty.setTextColor(0xFF8A93A8);
-            empty.setTextSize(13);
-            empty.setPadding(28, 26, 28, 26);
-            box.addView(empty);
+            if (running.isEmpty()) {
+                TextView empty = new TextView(this);
+                empty.setText("容器内暂无应用");
+                empty.setTextColor(0xFF8A93A8);
+                empty.setTextSize(13);
+                empty.setPadding(28, 26, 28, 26);
+                box.addView(empty);
+            }
             return;
         }
+        TextView launchHead = new TextView(this);
+        launchHead.setText("启动应用");
+        launchHead.setTextColor(0xFF8A93A8);
+        launchHead.setTextSize(12);
+        launchHead.setPadding(28, 16, 28, 6);
+        box.addView(launchHead);
         int shown = 0;
         for (final VBox.VAppEntry e : apps) {
             if (shown >= 9) {

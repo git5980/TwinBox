@@ -62,6 +62,9 @@ public class VApp extends Application {
             public void onMainProcess() {
                 TLog.i("VApp", "onMainProcess");
                 killZombieStubProcesses();
+                // TwinBox 2.1.64：清安装中转残留（进程被杀路径留下的
+                // cache/incoming.apk——用户在容器 cache 里发现的 APK 残留）。
+                InstallCenter.cleanupLeftovers(VApp.this);
             }
 
             @Override

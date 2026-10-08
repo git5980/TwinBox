@@ -43,6 +43,10 @@ import java.util.concurrent.ThreadFactory;
  *
  * 执行模型：单线程池（与 2.1.59 相同——安装彼此串行防竞态），
  * UI 读取（列表刷新）不在此池。
+ *
+ * TwinBox 2.1.64：cache 中转文件生命周期管理——runApk 的 incoming.apk
+ * 装完（成功/失败/异常/早退）一律删除；App 冷启动兜底清一次（进程被杀
+ * 路径留下的残留在下次启动时兜住）。
  */
 public final class InstallCenter {
 
@@ -313,6 +317,7 @@ public final class InstallCenter {
             if (in == null) {
                 t.state = STATE_FAILED;
                 t.error = "打不开所选文件";
+                deleteQuietly(tmp);
                 finishTask(t, "安装失败：打不开所选文件");
                 return;
             }
@@ -337,12 +342,14 @@ public final class InstallCenter {
             TLog.e("InstallCenter", "copy apk fail", ex);
             t.state = STATE_FAILED;
             t.error = String.valueOf(ex.getMessage());
+            deleteQuietly(tmp);
             finishTask(t, "读取失败：" + t.error);
             return;
         }
         if (tmp.length() == 0) {
             t.state = STATE_FAILED;
             t.error = "文件为空（可能不是 APK）";
+            deleteQuietly(tmp);
             finishTask(t, "安装失败：文件为空");
             return;
         }
@@ -354,6 +361,7 @@ public final class InstallCenter {
                 if (isPendingFor(pi.packageName)) {
                     t.state = STATE_FAILED;
                     t.error = "该应用已有进行中的任务";
+                    deleteQuietly(tmp);
                     finishTask(t, "安装失败：已有进行中的任务");
                     return;
                 }
@@ -395,7 +403,35 @@ public final class InstallCenter {
             toast = "安装异常：" + t.label;
         }
         stopPoller(poller, t);
+        // TwinBox 2.1.64：装完（无论成败）清掉 cache 里的安装中转文件——
+        // 老代码从头到尾没删过，用户在容器 cache 里发现了 APK 残留
+        // （SAF 选多大它就留多大，几百 MB 级垃圾）。
+        deleteQuietly(tmp);
         finishTask(t, toast);
+    }
+
+    /**
+     * TwinBox 2.1.64：冷启动兜底清理——进程被杀/崩溃路径留下的中转文件
+     * 这里兜住。App 启动时调一次即可（幂等）。
+     */
+    public static void cleanupLeftovers(Context ctx) {
+        try {
+            File tmp = new File(ctx.getCacheDir(), "incoming.apk");
+            if (tmp.exists() && tmp.delete()) {
+                TLog.i("InstallCenter", "cleaned leftover incoming.apk: " + tmp.length() + " bytes");
+            }
+        } catch (Throwable t) {
+            TLog.w("InstallCenter", "cleanup fail: " + t);
+        }
+    }
+
+    private static void deleteQuietly(File f) {
+        try {
+            if (f.exists() && !f.delete()) {
+                TLog.w("InstallCenter", "temp apk not deleted: " + f);
+            }
+        } catch (Throwable ignore) {
+        }
     }
 
     /**

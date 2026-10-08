@@ -168,6 +168,19 @@ public class VActivityManager {
         }
     }
 
+    /**
+     * TwinBox 2.1.64：列出容器内该 userId 的运行中 task（宿主 UI 用）。
+     * taskId 为系统侧真实 id，可直接 moveTaskToFront。
+     */
+    public java.util.List<AppTaskInfo> getRunningTasks(int userId) {
+        try {
+            java.util.List<AppTaskInfo> r = getService().getRunningTasks(userId);
+            return r != null ? r : java.util.Collections.<AppTaskInfo>emptyList();
+        } catch (Throwable t) {
+            return java.util.Collections.<AppTaskInfo>emptyList();
+        }
+    }
+
     public ComponentName getCallingActivity(IBinder token) {
         try {
             return getService().getCallingActivity(VUserHandle.myUserId(), token);

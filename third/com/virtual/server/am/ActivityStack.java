@@ -774,6 +774,24 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
         }
     }
 
+    /**
+     * TwinBox 2.1.64：列出该 userId 的全部 task（宿主 UI 小窗调出用）。
+     * taskId 为系统侧真实 task id；baseIntent 是 guest 原 intent
+     * （component 即 guest 包名）。
+     */
+    java.util.List<AppTaskInfo> getRunningTasks(int userId) {
+        java.util.List<AppTaskInfo> out = new java.util.ArrayList<>(mHistory.size());
+        synchronized (mHistory) {
+            for (int i = 0; i < mHistory.size(); i++) {
+                TaskRecord task = mHistory.valueAt(i);
+                if (task.userId == userId && task.activities.size() > 0) {
+                    out.add(task.getAppTaskInfo());
+                }
+            }
+        }
+        return out;
+    }
+
     ComponentName getActivityClassForToken(int userId, IBinder token) {
         synchronized (mHistory) {
             ActivityRecord r = findActivityByToken(userId, token);

@@ -2196,6 +2196,58 @@ callerPackage（guest 包名）与系统进程表里的宿主进程不匹配 →
 需要同步：`FloatingService.java`（重写）+ `floating_drawer.xml`（新）+
 `bg_handle.xml`（新）+ strings + manifest（90/2.1.63）。
 
+
+## 2.1.64：VMOS 式小窗调出容器应用 + cache 安装残留清理
+
+### 两件事（用户中途补充的需求 + 上午的残留报告，同版交付）
+
+#### ① 容器应用小窗拉出（VMOS「应用界面拉出来」）
+**需求澄清**：拖悬浮窗拉出的不是面板，是**正在运行的容器应用的实时界面**
+（小窗），且可切回——VMOS 的应用小窗体验。
+
+**链路（全部新建）**：
+- 引擎：`IActivityManager.aidl` 加 `getRunningTasks(userId)` →
+  `ActivityStack.getRunningTasks()`（遍历 mHistory，taskId 是系统侧真实
+  task id——stub 创建时 AMS 回传的原值）→ `VActivityManagerService`
+  实现 → 客户端 `VActivityManager.getRunningTasks()`；
+- 宿主：`VBox.runningTasks()`（汇总各分身的 task + 包名提取）；
+- **小窗调出** `VBox.showTaskInWindow(ctx, taskId, freeform)`：
+  `ActivityManager.moveTaskToFront(taskId, 0, options)` +
+  `setLaunchWindowingMode(5=FREEFORM)` + `setLaunchBounds`（右缘 72%×78%
+  窗口）——REORDER_TASKS（normal 权限，宿主移动自己名义的 task，
+  guest task 以 stub 注册归属宿主，合规）。
+  `setLaunchWindowingMode` 走**反射**（ECJ 解析 android-34 报 undefined，
+  且可运行时探测 ROM 支持度）：ColorOS 拒 freeform → 自动降级全屏调出，
+  不失败只降级；
+- **悬浮抽屉面板**：拉出时实时列「运行中 · 点按小窗/全屏」区（≤5 个）；
+  点按 = 小窗 ⇄ 全屏 toggle（item selected 态记方向）；下方保留原
+  「启动应用」列表。
+
+#### ② cache 安装残留清理（上午用户报告）
+`InstallCenter.runApk` 的 `cache/incoming.apk` **全程无删除**（成功/失败/
+异常/早退五路全漏，2.1.60 搬迁时从老代码原样带过来的 bug）：
+- 收尾统一 `deleteQuietly(tmp)`（五个早退路径各补一处）；
+- 冷启动兜底：`VApp.onMainProcess → InstallCenter.cleanupLeftovers()`
+  （进程被杀/崩溃路径的残留）。
+
+### 验证
+11/11（91/2.1.64；AIDL 重生成全链符号、小窗反射调用、权限、cache
+清理、2.1.60-63 回归全过）。
+
+### 真机验证路径（小窗是本版重点，注意顺序）
+1. 启动一个容器应用（如 XPlayer）→ 播放 → Home 退后台；
+2. 拖出悬浮抽屉 → 「运行中」区应出现 XPlayer → 点按 →
+   **小窗从右缘弹出显示应用实时界面**；
+3. 再点 → 全屏；再点 → 小窗（toggle）；
+4. 若 ColorOS 拒 freeform：自动降级为全屏调出（toast 提示），把结果告诉我；
+5. cache 检查：装一个 APK → 容器 cache 目录无 incoming.apk 残留；
+   已有残留的，冷启动一次自动清掉。
+
+需要同步：**va2 侧 `IActivityManager.aidl`（+1 方法）**、twinbox2 侧
+`ActivityStack.java`/`VActivityManagerService.java`/`VActivityManager.java`/
+`VBox.java`/`FloatingService.java`/`InstallCenter.java`/`VApp.java` +
+manifest（91/2.1.64）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

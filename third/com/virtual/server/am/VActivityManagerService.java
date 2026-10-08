@@ -281,6 +281,12 @@ public class VActivityManagerService extends IActivityManager.Stub {
     }
 
     @Override
+    public java.util.List<AppTaskInfo> getRunningTasks(int userId) {
+        // TwinBox 2.1.64：宿主 UI 小窗调出的数据源
+        return mActivityStack.getRunningTasks(userId);
+    }
+
+    @Override
     public String getPackageForToken(int userId, IBinder token) {
         return mActivityStack.getPackageForToken(userId, token);
     }
