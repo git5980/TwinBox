@@ -94,6 +94,21 @@ public class MethodParameterUtils {
 		CALLER_PKG_ARG.put("registerReceiverWithFeature", 1);
 		CALLER_PKG_ARG.put("registerReceiverWithFeatureForCompat", 1);
 		CALLER_PKG_ARG.put("registerReceiver", 1);
+		// ---- TwinBox 2.1.68：防御纵深（Android 14-16 已知带 caller 包名
+		// 校验的其余 API，一次补全。护栏语义不变：参数值 == 当前 guest
+		// 包名才替换，加错位置亦无害——宁可多挡，不可漏一堵墙。
+		// 抖音 attach 崩溃修复的后续排查面）----
+		// 广播发送（Android 16 同族校验）
+		CALLER_PKG_ARG.put("broadcastIntent", 1);
+		CALLER_PKG_ARG.put("broadcastIntentWithFeature", 1);
+		// Provider 获取（无代理直达系统时）
+		CALLER_PKG_ARG.put("getContentProvider", 1);
+		// 插桩/权限面
+		CALLER_PKG_ARG.put("startInstrumentation", 0);
+		CALLER_PKG_ARG.put("checkGrantUriPermission", 0);
+		// URI 授权面（fromPackage 列）
+		CALLER_PKG_ARG.put("grantUriPermission", 0);
+		CALLER_PKG_ARG.put("revokeUriPermission", 0);
 	}
 
 	/**

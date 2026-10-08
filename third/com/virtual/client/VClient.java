@@ -368,6 +368,22 @@ public final class VClient extends IVClient.Stub {
         if (processName == null) {
             processName = packageName;
         }
+        // TwinBox 2.1.68：进程名伪装（字节系硬骨头）。
+        // Application.getProcessName()（API 28+）走 ActivityThread.
+        // currentProcessName() → sCurrentProcessName 静态字段——guest
+        // 读到的是真实进程名 dev.twinbox.app:p0，而字节框架（抖音/
+        // 头条全家桶）用「进程名 == 包名」判定主进程、按前缀分派子进程
+        // 角色——读到 :p0 即非主非子，行为错乱。这里在 makeApplication
+        // 之前改字段，attach 阶段所有 getProcessName() 调用全部命中。
+        // 真系统侧（binder callerPackage）不受影响——那是另一条链
+        // （CALLER_PKG_ARG 表在管）。
+        try {
+            if (mirror.android.app.ActivityThread.sCurrentProcessName != null) {
+                mirror.android.app.ActivityThread.sCurrentProcessName.set(processName);
+            }
+        } catch (Throwable pnT) {
+            dev.twinbox.app.TLog.w("V|VC", "setProcessName fail (non-fatal): " + pnT);
+        }
         systemPid = VActivityManager.get().getSystemPid();
         try {
             setupUncaughtHandler();

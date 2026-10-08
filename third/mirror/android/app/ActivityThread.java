@@ -33,6 +33,10 @@ import mirror.RefStaticObject;
 public class ActivityThread {
     public static Class<?> TYPE = RefClass.load(ActivityThread.class, "android.app.ActivityThread");
     public static RefStaticMethod currentActivityThread;
+    // TwinBox 2.1.68：Application.getProcessName() 的真数据源（API 28+
+    // currentProcessName() 直接读此静态字段）。guest 视角的进程名伪装
+    // ——字节系框架用它判定进程角色，读到 :p0 宿主名会导致行为错乱。
+    public static RefStaticObject<String> sCurrentProcessName;
     public static RefMethod<String> getProcessName;
     public static RefMethod<Handler> getHandler;
     public static RefMethod<Object> installProvider;
