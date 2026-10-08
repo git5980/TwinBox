@@ -2157,6 +2157,45 @@ callerPackage（guest 包名）与系统进程表里的宿主进程不匹配 →
 
 需要同步：`MethodParameterUtils.java`（表加 3 行）+ manifest（89/2.1.62）。
 
+
+## 2.1.63：VMOS 式抽屉悬浮球（拖出/拖回跟手交互）
+
+### 背景（用户需求 + 两张 VMOS 参考截图）
+「拖动悬浮球让页面拉出来，也可以拉回去」——把 2.0.8 的「自由球 +
+居中弹面板」重构为 VMOS 同款侧拉抽屉。
+
+### 交互（与参考截图一致）
+- **贴边态**：右缘竖条把手（‹ 箭头，34dp×120dp），面板停屏外；
+- **横向拖把手**：面板从右缘**跟手**拉出（实时位移，非弹窗）；
+- **反向拖**：跟手收回；
+- **松手判定**：拉出过半 → 吸附展开；否则吸附回贴边（280ms
+  Decelerate 动画，VMOS 手感）；
+- **点按把手**：toggle 展开/收回（动画，兼容老习惯）；
+- **展开态点面板外**：收回（FLAG_WATCH_OUTSIDE_TOUCH）；
+- **纵向拖**：把手换高度位置（clamp 屏内）；启动分身后自动收回。
+
+### 实现
+- 单一 window 容器 `[把手][面板]`（floating_drawer.xml）——两个
+  window 变一个，拖动就是平移容器 x，天然跟手、无同步问题；
+  FLAG_LAYOUT_NO_LIMITS 允许贴边态面板停屏外；
+- FloatingService 重写（~300 行）：handleTouch 手势状态机
+  （DOWN 记基线 / MOVE 跟手 clamp / UP 点按 vs 拖动判定 + 吸附）；
+- 面板内容沿用原结构（panel_items 动态填充分身列表，启动即收回）；
+- 老布局文件保留不删（aapt 全量编译，无引用即无害）。
+
+### 验证
+10/10（90/2.1.63；ACTION_OUTSIDE 为编译期内联常量不进字符串池，
+以 snapTo/handleTouch/createDrawer 等逻辑符号验证）。
+
+### 真机验证路径
+1. 开悬浮球：右缘出现竖条把手；
+2. 向左拖：面板跟手拉出，松手过半吸附展开；反向推回；
+3. 点按把手：toggle；展开态点面板外：收回；
+4. 纵向拖动把手换位置；面板里点应用：启动并自动收回。
+
+需要同步：`FloatingService.java`（重写）+ `floating_drawer.xml`（新）+
+`bg_handle.xml`（新）+ strings + manifest（90/2.1.63）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术
