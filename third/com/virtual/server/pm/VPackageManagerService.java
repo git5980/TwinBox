@@ -854,7 +854,10 @@ public class VPackageManagerService extends IPackageManager.Stub {
                 }
             }
             if (pkgList.isEmpty()) {
-                VLog.e(TAG, "getPackagesForUid return an empty result.");
+                // TwinBox 2.1.70：E→D 降噪。空结果对未知/宿主 uid 是隔离
+                // 特性（guest 不该看见宿主包名），不是错误——真机日志里
+                // 一秒刷 15 行 E 级纯噪音（抖音 40.6 正常运行时）。
+                VLog.d(TAG, "getPackagesForUid empty (isolated uid, expected).");
                 return null;
             }
             return pkgList.toArray(new String[0]);

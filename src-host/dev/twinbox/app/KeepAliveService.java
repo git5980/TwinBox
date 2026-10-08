@@ -132,8 +132,36 @@ public class KeepAliveService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         TLog.i("KeepAlive", "task removed by swipe, FGS survives (o-stop check)");
+        // TwinBox 2.1.70：ColorOS 实锤行为链（23:22 日志）：划掉分身任务
+        // → 宿主退后台 → ~46s 后 o-stop(40) 强停整个容器（FGS 也杀——
+        // "Killing dev.twinbox.app:p0 (adj 450): stop dev.twinbox.app due
+        // to o-stop(40)"）。这是系统级处置，应用层无法拒绝；只能引导
+        // 用户两条路：最近任务加锁 / 电池白名单。通知只发一次/进程生命周期。
+        if (!sStopGuideShown) {
+            sStopGuideShown = true;
+            try {
+                android.app.NotificationManager nm = (android.app.NotificationManager)
+                        getSystemService(NOTIFICATION_SERVICE);
+                ensureChannel();
+                android.app.Notification n = new android.app.Notification.Builder(this, CHANNEL_ID)
+                        .setSmallIcon(android.R.drawable.ic_lock_lock)
+                        .setContentTitle("容器可能被系统停止")
+                        .setContentText("刚划掉了分身任务。ColorOS 会在后台自动停止整个 TwinBox——"
+                                + "如需分身常驻：最近任务卡片下拉加锁，或 设置→电池→TwinBox→允许后台运行")
+                        .setStyle(new android.app.Notification.BigTextStyle()
+                                .bigText("刚划掉了分身任务。ColorOS 会在后台自动停止整个 TwinBox——"
+                                        + "如需分身常驻：最近任务卡片下拉加锁，或 设置→电池→TwinBox→允许后台运行"))
+                        .setAutoCancel(true)
+                        .build();
+                nm.notify(9002, n);
+            } catch (Throwable t) {
+                TLog.w("KeepAlive", "stop-guide notify fail: " + t);
+            }
+        }
         super.onTaskRemoved(rootIntent);
     }
+
+    private static boolean sStopGuideShown = false;
 
     @Override
     public void onDestroy() {
