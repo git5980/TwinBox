@@ -2038,6 +2038,47 @@ GitHub 上的 va2 仓库需要同步 SandboxFs.cpp 改动。**
 需要同步：`FileUtils.java` / `V64BitHelper.java` / `VAppManagerService.java` /
 `PackageCacheManager.java` / `InstallActivity.java` + manifest（86/2.1.59）。
 
+
+## 2.1.60：安装任务中心（进度不丢）+ 大包克隆 OOM 根治
+
+### 背景（用户两轮反馈）
+①「克隆应用时返回主页再进克隆页面，克隆进度消失了；把安装 APK 按钮换
+成一个进度显示的按钮，点一下出现小列表显示克隆进度和 APK 安装进度」；
+②三份真机日志：hardlink EACCES + 256MB byte[] OOM（抖音克隆失败）。
+
+### 病根与修法
+| # | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 退出页面进度消失 | 任务在静态池（2.1.59）但**状态挂在 Activity 实例** | 新 `InstallCenter` 应用级单例：任务列表/状态/进度全部上移，任何页面任何时刻可见 |
+| 2 | 64 位目录硬链真机 EACCES | SELinux 不给 untrusted_app 域 `linkat` 权限（设计时假设自有文件可链——对了一半：POSIX 允许，SELinux 不允许） | fallback 链改 **transferTo 直拷**（不再走老 copyPackage64 内存转发） |
+| 3 | 抖音克隆 OOM（Failed to allocate 268435468 byte） | 老 copyPackage64 = 整份 APK 读进 byte[] + ashmem binder 转发，256MB 包必 OOM | 同 #2：直拷零内存峰值；老路径仅作最后兜底 |
+
+### 新交互（按用户规格）
+- 「装 APK」按钮 → **任务按钮**：空闲「任务」；有任务时显示最活跃任务百分比
+  +计数（如「45% · 2 任务」）；
+- 点开**任务面板**（小列表）：顶部「＋ 选择 APK 安装」（原按钮功能收编），
+  每任务一行——类型标签（克/多/装）+ 应用名 + 状态行 + **水平精度进度条**；
+- **进度是真值不是动画**：克隆/引擎段轮询目标 APK 文件实际增长
+  （`TB-poller` 线程，400ms 周期，字节→百分比，上限 88% 后进「安装中…」）；
+  APK 安装的 SAF 拷贝段直接按已写字节上报；
+- 防重复：同包名任务进行中拒绝再提交；历史保留 8 条，可清已完成；
+- `onTaskUpdate` 主线程回调（Activity onStart 注册/onStop 注销，无泄漏），
+  任务完成自动刷容器标记。
+
+### 验证
+11/11：InstallCenter/面板/轮询/三接口/OOM 修复全在 dex；2.1.57-59 回归无损；
+87/2.1.60；纯 Java（.so 不变）。
+
+### 真机验证路径
+1. 克隆抖音级别大 App：**不再 OOM**；进行中返回主页再进——按钮显示百分比，
+   点开面板进度条在走；
+2. 克隆中再克隆另一个：排队（面板两个任务，第一个完成后自动开始第二个）；
+3. 64 位目录检查（大 App 装完正常启动）；
+4. 老路径兜底不回归：普通 App 克隆照常。
+
+需要同步：`InstallCenter.java`（新）+ `InstallActivity.java` +
+`V64BitHelper.java`（fallback 链）+ strings/布局 + manifest（87/2.1.60）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

@@ -89,4 +89,12 @@
     <string name="malware_toast_need_master">请先开启加固模式</string>
     <string name="malware_cfg_fail">无法读取设备配置</string>
     <string name="title_files">容器文件</string>
+    <!-- TwinBox 2.1.60：安装任务中心 -->
+    <string name="btn_tasks_idle">任务</string>
+    <string name="btn_tasks_fmt">%1$s · %2$d 任务</string>
+    <string name="btn_tasks_done">已完成</string>
+    <string name="btn_tasks_title">安装任务</string>
+    <string name="btn_tasks_pick_apk">＋ 选择 APK 安装</string>
+    <string name="btn_tasks_empty">暂无任务</string>
+    <string name="btn_tasks_clear">清除已完成</string>
 </resources>

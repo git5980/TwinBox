@@ -58,7 +58,7 @@
             android:textAllCaps="false"
             android:textSize="@dimen/md_type_body"
             android:textColor="@color/md_on_primary"
-            android:text="@string/btn_pick_apk" />
+            android:text="@string/btn_tasks_idle" />
     </LinearLayout>
 
     <TextView

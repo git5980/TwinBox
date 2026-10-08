@@ -363,9 +363,22 @@ public class V64BitHelper extends ContentProvider {
             android.system.Os.link(packagePath, target64.getAbsolutePath());
             VEnvironment.chmodPackageDictionary(target64);
         } catch (Throwable linkFail) {
-            VLog.w("V64", "hardlink fail (%s), fallback to full copy: %s",
+            // TwinBox 2.1.60：真机实锤（08_10-09-54 日志）：SELinux 不给
+            // untrusted_app 域 linkat 权限，硬链稳定 EACCES。fallback 不能
+            //再走老 copyPackage64——它是「整份 APK 读进 byte[] + ashmem
+            // binder 转发」，256MB 包（抖音）在 :x 进程必然 OOM（实测
+            // Failed to allocate 268435468 byte）。改 transferTo 直拷：
+            // 内核 sendfile，零内存峰值，同量级速度。
+            VLog.w("V64", "hardlink fail (%s), fallback to transferTo copy: %s",
                     String.valueOf(linkFail.getMessage()), packageName);
-            return copyPackage64(packagePath, packageName);
+            try {
+                FileUtils.copyFile(new File(packagePath), target64);
+                VEnvironment.chmodPackageDictionary(target64);
+            } catch (Throwable copyFail) {
+                VLog.w("V64", "transferTo copy also fail (%s), last resort legacy: %s",
+                        String.valueOf(copyFail.getMessage()), packageName);
+                return copyPackage64(packagePath, packageName);
+            }
         }
         try {
             Bundle res = getHelper()

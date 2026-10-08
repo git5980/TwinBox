@@ -77,6 +77,8 @@ public class InstallActivity extends Activity {
     private View mProgressWrap;
     private ProgressBar mProgress;
     private TextView mProgressText;
+    private TextView mBtnTasks;
+    private InstallCenter.Listener mCenterListener;
     private HostAppAdapter mAdapter;
 
     @Override
@@ -87,12 +89,17 @@ public class InstallActivity extends Activity {
         mProgressWrap = findViewById(R.id.progress_wrap);
         mProgress = (ProgressBar) findViewById(R.id.progress);
         mProgressText = (TextView) findViewById(R.id.progress_text);
-        findViewById(R.id.btn_pick_apk).setOnClickListener(new View.OnClickListener() {
+        // TwinBox 2.1.60：原「装 APK」按钮换任务按钮（进度显示）。
+        // 选择 APK 的入口收进任务面板顶部；面板实时显示克隆/多开/安装进度
+        // ——退出页面再回来进度不再丢（状态在应用级 InstallCenter）。
+        mBtnTasks = (TextView) findViewById(R.id.btn_pick_apk);
+        mBtnTasks.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                pickApk();
+                showTasksDialog();
             }
         });
+        updateTaskButton();
         findViewById(R.id.btn_back).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -149,6 +156,167 @@ public class InstallActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        // TwinBox 2.1.60：进页面即挂任务中心监听——后台跑的任务进度
+        // 实时反映到按钮；有任务完成时顺手刷新容器标记。
+        mCenterListener = new InstallCenter.Listener() {
+            @Override
+            public void onTaskUpdate(InstallCenter.Task task) {
+                updateTaskButton();
+                if (InstallCenter.get().hasRecentlyFinished()) {
+                    refreshBoxFlag();
+                }
+            }
+        };
+        InstallCenter.get().addListener(mCenterListener);
+        updateTaskButton();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (mCenterListener != null) {
+            InstallCenter.get().removeListener(mCenterListener);
+            mCenterListener = null;
+        }
+    }
+
+    /** TwinBox 2.1.60：任务按钮文案——空闲「任务」；有活动任务显示百分比+计数 */
+    private void updateTaskButton() {
+        java.util.List<InstallCenter.Task> ts = InstallCenter.get().snapshot();
+        if (ts.isEmpty()) {
+            mBtnTasks.setText(R.string.btn_tasks_idle);
+            return;
+        }
+        int active = 0;
+        String topState = "";
+        for (InstallCenter.Task task : ts) {
+            if (task.state == InstallCenter.STATE_RUNNING) {
+                active++;
+                if (task.progress >= 0) {
+                    topState = task.progress + "%";
+                } else if (topState.isEmpty()) {
+                    topState = "…";
+                }
+            }
+        }
+        if (active == 0) {
+            topState = getString(R.string.btn_tasks_done);
+        }
+        mBtnTasks.setText(getString(R.string.btn_tasks_fmt, topState, ts.size()));
+    }
+
+    /**
+     * TwinBox 2.1.60：任务面板（小列表）。
+     * 行内：类型标签 + 应用名 + 精度进度条 + 状态。
+     * 顶部「选择 APK 安装」收编原按钮功能。
+     */
+    private void showTasksDialog() {
+        java.util.List<InstallCenter.Task> ts = InstallCenter.get().snapshot();
+        if (ts.isEmpty()) {
+            // 空任务面板仍要能装 APK
+            pickApk();
+            return;
+        }
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = (int) (getResources().getDisplayMetrics().density * 16);
+        root.setPadding(pad, pad / 2, pad, pad / 2);
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(root);
+
+        TextView pickRow = new TextView(this);
+        pickRow.setText(R.string.btn_tasks_pick_apk);
+        pickRow.setTextColor(0xFF5B8CFF);
+        pickRow.setTextSize(15);
+        pickRow.setPadding(0, pad / 2, 0, pad);
+        pickRow.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pickApk();
+            }
+        });
+        root.addView(pickRow);
+
+        for (final InstallCenter.Task task : ts) {
+            root.addView(buildTaskRow(task, pad));
+        }
+
+        TextView clear = new TextView(this);
+        clear.setText(R.string.btn_tasks_clear);
+        clear.setTextColor(0xFF8A93A8);
+        clear.setTextSize(13);
+        clear.setPadding(0, pad, 0, 0);
+        clear.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                InstallCenter.get().clearFinished();
+                updateTaskButton();
+            }
+        });
+        root.addView(clear);
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.btn_tasks_title)
+                .setView(scroll)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
+    private View buildTaskRow(final InstallCenter.Task task, int padPx) {
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(0, padPx / 2, 0, padPx / 2);
+
+        TextView kind = new TextView(this);
+        kind.setTextSize(18);
+        kind.setTextColor(0xFF5B8CFF);
+        kind.setText(task.type == InstallCenter.TYPE_CLONE ? "克"
+                : task.type == InstallCenter.TYPE_MULTI ? "多" : "装");
+        row.addView(kind);
+
+        android.widget.LinearLayout mid = new android.widget.LinearLayout(this);
+        mid.setOrientation(android.widget.LinearLayout.VERTICAL);
+        android.widget.LinearLayout.LayoutParams midLp = new android.widget.LinearLayout.LayoutParams(
+                0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        midLp.leftMargin = padPx / 2;
+        mid.setLayoutParams(midLp);
+
+        TextView name = new TextView(this);
+        name.setText(task.label);
+        name.setTextColor(0xFFF2F4FA);
+        name.setTextSize(14);
+        mid.addView(name);
+
+        TextView status = new TextView(this);
+        status.setTextSize(12);
+        status.setTextColor(0xFF8A93A8);
+        status.setText(InstallCenter.get().describeState(task));
+        mid.addView(status);
+
+        ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pb.setMax(100);
+        if (task.progress >= 0) {
+            pb.setProgress(task.progress);
+        } else {
+            pb.setIndeterminate(task.state == InstallCenter.STATE_RUNNING);
+        }
+        android.widget.LinearLayout.LayoutParams pbLp = new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                (int) (getResources().getDisplayMetrics().density * 4));
+        pbLp.topMargin = padPx / 3;
+        pb.setLayoutParams(pbLp);
+        if (task.state == InstallCenter.STATE_RUNNING) {
+            mid.addView(pb);
+        }
+        row.addView(mid);
+        return row;
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, final Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_PICK_APK && resultCode == RESULT_OK && data != null && data.getData() != null) {
@@ -157,54 +325,11 @@ public class InstallActivity extends Activity {
     }
 
     private void installFromUri(final Uri uri) {
-        mProgressWrap.setVisibility(View.VISIBLE);
-        mProgress.setIndeterminate(true);
+        // TwinBox 2.1.60：任务上移 InstallCenter——退出页面进度不丢，
+        // 结果在任务面板查看（失败原因也在面板 + TLog）。
         String name = queryName(uri);
-        mProgressText.setText("正在安装 " + name + " …");
-        new AsyncTask<Void, Void, String>() {
-            @Override
-            protected String doInBackground(Void... voids) {
-                TLog.i("Install", "installFromUri: " + uri);
-                File tmp = new File(getCacheDir(), "incoming.apk");
-                try {
-                    TLog.i("Install", "copying to cache...");
-                    InputStream in = getContentResolver().openInputStream(uri);
-                    if (in == null) {
-                        return "读取失败：打不开所选文件";
-                    }
-                    FileOutputStream out = new FileOutputStream(tmp);
-                    byte[] buf = new byte[16384];
-                    int n;
-                    while ((n = in.read(buf)) > 0) {
-                        out.write(buf, 0, n);
-                    }
-                    out.close();
-                    in.close();
-                } catch (Throwable t) {
-                    TLog.e("Install", "copy to cache fail", t);
-                    return "读取失败：" + t.getMessage();
-                }
-                TLog.i("Install", "copied apk size=" + tmp.length() + " bytes");
-                if (tmp.length() == 0) {
-                    return "读取失败：文件为空（选中的可能不是 APK）";
-                }
-                InstallResult r = VBox.installApk(InstallActivity.this, tmp.getAbsolutePath());
-                if (r == null) {
-                    return "安装失败";
-                }
-                if (r.isSuccess) {
-                    return "安装成功：" + (r.packageName == null ? name : r.packageName);
-                }
-                return "安装失败：" + (r.error == null ? "未知错误" : String.valueOf(r.error));
-            }
-
-            @Override
-            protected void onPostExecute(String s) {
-                mProgressWrap.setVisibility(View.GONE);
-                Toast.makeText(InstallActivity.this, s, Toast.LENGTH_LONG).show();
-                refreshBoxFlag();
-            }
-        }.executeOnExecutor(INSTALL_POOL);
+        InstallCenter.get().submitApk(InstallActivity.this, uri, name);
+        updateTaskButton();
     }
 
     /** 装完/多开后只需重新取一次「容器内已装集合」，不用重建整个列表 */
@@ -369,10 +494,12 @@ public class InstallActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     if (inBox(e.packageName)) {
-                        new MultiOpenTask(e).executeOnExecutor(INSTALL_POOL);
+                        // TwinBox 2.1.60：多开也进任务中心（大包提取 lib 同样耗时）
+                        InstallCenter.get().submitMulti(e.packageName, e.label);
                     } else {
-                        new CloneTask(e).executeOnExecutor(INSTALL_POOL);
+                        InstallCenter.get().submitClone(e.packageName, e.label);
                     }
+                    updateTaskButton();
                 }
             });
             return v;
@@ -411,32 +538,4 @@ public class InstallActivity extends Activity {
         }
     }
 
-    /** 已克隆应用再点一次 → 多开一个新分身 */
-    private class MultiOpenTask extends AsyncTask<Void, Void, String> {
-        private final VBox.VAppEntry e;
-
-        MultiOpenTask(VBox.VAppEntry e) {
-            this.e = e;
-        }
-
-        @Override
-        protected void onPreExecute() {
-            mProgressWrap.setVisibility(View.VISIBLE);
-            mProgress.setIndeterminate(true);
-            mProgressText.setText("正在多开 " + e.label + " …");
-        }
-
-        @Override
-        protected String doInBackground(Void... voids) {
-            int uid = VBox.cloneToNewUser(e.packageName);
-            return uid >= 0 ? "分身已创建（#" + uid + "）" : "多开失败";
-        }
-
-        @Override
-        protected void onPostExecute(String s) {
-            mProgressWrap.setVisibility(View.GONE);
-            Toast.makeText(InstallActivity.this, s, Toast.LENGTH_SHORT).show();
-            refreshBoxFlag();
-        }
-    }
 }
