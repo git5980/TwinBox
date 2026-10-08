@@ -520,7 +520,10 @@ public class VAppManagerService extends IAppManager.Stub {
         }
 
         if (support64bit && !useSourceLocationApk) {
-            V64BitHelper.copyPackage64(packageFile.getPath(), pkg.packageName);
+            // TwinBox 2.1.59：硬链版（同 uid 自有文件，零 I/O 瞬时完成；
+            // 老 copyPackage64 要把整份 APK 塞进 byte[] + ashmem 内存转发——
+            // 200MB 包 = 400MB 内存峰值 + 双倍写盘，大包克隆又慢又险）。
+            V64BitHelper.copyPackage64Fast(packageFile.getPath(), pkg.packageName);
         }
 
         ps.appMode = useSourceLocationApk ? MODE_APP_USE_OUTSIDE_APK : MODE_APP_COPY_APK;
@@ -874,8 +877,16 @@ public class VAppManagerService extends IAppManager.Stub {
 
     @Override
     public List<InstalledAppInfo> getInstalledApps(int flags) {
-        List<InstalledAppInfo> infoList = new ArrayList<>(getInstalledAppCount());
-        for (VPackage p : PackageCacheManager.PACKAGE_CACHE.values()) {
+        // TwinBox 2.1.59：原先是裸遍历 PACKAGE_CACHE——克隆装包的 put/remove
+        // 与本方法并发时 ArrayMap 遍历会 CME（装包期间宿主 UI 正好在拉列表，
+        // 异常打到 binder → 客户端列表直接失败）。快照化：持锁拷数组（微秒级），
+        // 遍历在锁外。
+        List<VPackage> snapshot;
+        synchronized (PackageCacheManager.class) {
+            snapshot = new ArrayList<>(PackageCacheManager.PACKAGE_CACHE.values());
+        }
+        List<InstalledAppInfo> infoList = new ArrayList<>(snapshot.size());
+        for (VPackage p : snapshot) {
             PackageSetting setting = (PackageSetting) p.mExtras;
             infoList.add(setting.getAppInfo());
         }
@@ -884,8 +895,13 @@ public class VAppManagerService extends IAppManager.Stub {
 
     @Override
     public List<InstalledAppInfo> getInstalledAppsAsUser(int userId, int flags) {
-        List<InstalledAppInfo> infoList = new ArrayList<>(getInstalledAppCount());
-        for (VPackage p : PackageCacheManager.PACKAGE_CACHE.values()) {
+        // TwinBox 2.1.59：同 getInstalledApps——快照化防 CME
+        List<VPackage> snapshot;
+        synchronized (PackageCacheManager.class) {
+            snapshot = new ArrayList<>(PackageCacheManager.PACKAGE_CACHE.values());
+        }
+        List<InstalledAppInfo> infoList = new ArrayList<>(snapshot.size());
+        for (VPackage p : snapshot) {
             PackageSetting setting = (PackageSetting) p.mExtras;
             boolean visible = setting.isInstalled(userId);
             if ((flags & VirtualCore.GET_HIDDEN_APP) == 0 && setting.isHidden(userId)) {

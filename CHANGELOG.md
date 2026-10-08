@@ -1992,6 +1992,52 @@ GitHub 上的 va2 仓库需要同步 SandboxFs.cpp 改动。**
 `DeviceInfoPersistenceLayer.java`/`NativeEngine.java`/`VClient.java`、`MainActivity.java`/
 `FileExplorerActivity.java`/两布局/strings/menu/manifest（85/2.1.58）。
 
+
+## 2.1.59：克隆提速 + 克隆期间列表卡死根治（任务分池）
+
+### 背景（用户实测反馈）
+①「克隆应用的速度很慢」；②「克隆时返回主页面再进克隆页，应用列表读不出来」
+（截图：正在读取主空间应用… 永久转圈）。
+
+### 病根（三个，一起治）
+| # | 病根 | 位置 | 后果 |
+|---|---|---|---|
+| 1 | **任务全在 AsyncTask 默认串行池** | `InstallActivity` 5 个任务全 `.execute()` | 克隆（几十秒）占住唯一串行线程 → 列表任务在队列里排不上 → 转圈到克隆结束（②的直接原因） |
+| 2 | **1KB 缓冲手写拷贝循环** | `FileUtils.copyFile` | 100MB APK = 10 万次 read/write 系统调用，加密存储上雪上加霜（①主犯） |
+| 3 | **64 位目录二拷走内存转发** | `V64BitHelper.copyPackage64` | 整份 APK 读进 byte[] + 写进 ashmem 再 binder 转发给 64 位引擎进程落盘——大包克隆双倍写盘 + 400MB 内存峰值（①次犯 + 大包 OOM 风险） |
+
+### 修法
+1. **任务分池**：长任务（Clone/MultiOpen/installFromUri）走独立单线程池
+   `INSTALL_POOL`（安装彼此仍串行防竞态）；ListHostTask 走 `THREAD_POOL_EXECUTOR`
+   ——克隆期间列表照常秒开。收尾加 `isFinishing()` 守卫。
+2. **transferTo**：copyFile 改 `FileChannel.transferTo`（内核 sendfile 零拷贝），
+   短读保护 + 64KB 缓冲回退；writeToFile 1KB→256KB。
+3. **64 位目录硬链**：新 `copyPackage64Fast`——`Os.link`（同 uid 自有文件，
+   零 I/O 瞬时）+ 新 provider 方法 `copyLibs64`（只做 lib 提取 + odex，
+   跳过 APK 转发）；跨 fs/SELinux 拒链自动回退老全量路径。
+   更新/卸载语义不变（unlink 各自独立，inode 由链接计数保护）。
+4. **顺手排雷**：`getInstalledApps`/`getInstalledAppsAsUser` 裸遍历 PACKAGE_CACHE →
+   快照化（装包 put/remove 与列表遍历并发会 CME → binder 异常 → 客户端列表直接失败）；
+   `PackageCacheManager.size()` 锁对象对齐（原锁实例，put/remove 锁 class——两把锁互不排斥，上游手滑）。
+
+### 效果预期
+- 克隆耗时：APK 拷贝 ~3-5x（transferTo）+ 64 拷贝归零（硬链）→ 大体感提速一倍以上，
+  .so 提取成为剩余主要成本（真实工作量，不可避免）；
+- 克隆期间：进出克隆页列表秒开，不再转圈。
+
+### 验证
+12/12：分池符号/transferTo/copyPackage64Fast/copyLibs64 全在 dex、2.1.57/2.1.58
+回归无损、.so 无变化（纯 Java 版本，86/2.1.59）、签名过。
+
+### 真机验证路径
+1. 克隆一个大 App（如带大量 .so 的）：体感速度对比；进行中返回再进 → 列表应秒出；
+2. 克隆出的分身正常启动（硬链的 64 位 apk 读取正常）；
+3. 卸载宿主侧原 App 后分身仍可运行（拷贝语义未变）；
+4. 克隆期间主页面/克隆页来回切换无 ANR。
+
+需要同步：`FileUtils.java` / `V64BitHelper.java` / `VAppManagerService.java` /
+`PackageCacheManager.java` / `InstallActivity.java` + manifest（86/2.1.59）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

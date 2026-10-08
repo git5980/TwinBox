@@ -51,6 +51,26 @@ import java.util.Set;
  */
 public class InstallActivity extends Activity {
 
+    /**
+     * TwinBox 2.1.59：任务分池——克隆阻塞列表的根治。
+     * 病根：CloneTask / ListHostTask 全走 AsyncTask 默认串行执行器
+     * （单线程排队）。克隆一个大 App（几十秒）期间用户退出再进来，
+     * 新页面的 ListHostTask 在队列里永远排不上——「正在读取主空间应用...」
+     * 卡到克隆结束（截图实测）。
+     * 修法：长任务（克隆/多开/装 APK）走独立单线程池（彼此仍串行，避免
+     * 两个安装竞态）；短任务（列表读取）走 AsyncTask 并行池——克隆期间
+     * 列表照常秒开。
+     */
+    private static final java.util.concurrent.Executor INSTALL_POOL =
+            java.util.concurrent.Executors.newSingleThreadExecutor(
+                    new java.util.concurrent.ThreadFactory() {
+                        @Override
+                        public Thread newThread(Runnable r) {
+                            return new Thread(r, "TB-install");
+                        }
+                    });
+
+
     private static final int REQ_PICK_APK = 41;
 
     private ListView mList;
@@ -125,7 +145,7 @@ public class InstallActivity extends Activity {
         mProgressWrap.setVisibility(View.VISIBLE);
         mProgress.setIndeterminate(true);
         mProgressText.setText(R.string.progress_listing);
-        new ListHostTask().execute();
+        new ListHostTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     @Override
@@ -184,7 +204,7 @@ public class InstallActivity extends Activity {
                 Toast.makeText(InstallActivity.this, s, Toast.LENGTH_LONG).show();
                 refreshBoxFlag();
             }
-        }.execute();
+        }.executeOnExecutor(INSTALL_POOL);
     }
 
     /** 装完/多开后只需重新取一次「容器内已装集合」，不用重建整个列表 */
@@ -192,7 +212,7 @@ public class InstallActivity extends Activity {
         mProgressWrap.setVisibility(View.VISIBLE);
         mProgress.setIndeterminate(true);
         mProgressText.setText(R.string.progress_listing);
-        new ListHostTask(true).execute();
+        new ListHostTask(true).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     private String queryName(Uri uri) {
@@ -257,6 +277,9 @@ public class InstallActivity extends Activity {
 
         @Override
         protected void onPostExecute(List<VBox.VAppEntry> apps) {
+            if (isFinishing()) {
+                return;
+            }
             mProgressWrap.setVisibility(View.GONE);
             if (apps == null) {
                 Toast.makeText(InstallActivity.this, "读取主空间应用失败，请回上层重试",
@@ -346,9 +369,9 @@ public class InstallActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     if (inBox(e.packageName)) {
-                        new MultiOpenTask(e).execute();
+                        new MultiOpenTask(e).executeOnExecutor(INSTALL_POOL);
                     } else {
-                        new CloneTask(e).execute();
+                        new CloneTask(e).executeOnExecutor(INSTALL_POOL);
                     }
                 }
             });

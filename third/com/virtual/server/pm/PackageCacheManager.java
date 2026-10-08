@@ -13,7 +13,9 @@ public class PackageCacheManager {
     static final ArrayMap<String, VPackage> PACKAGE_CACHE = new ArrayMap<>();
 
     public static int size() {
-        synchronized (PACKAGE_CACHE) {
+        // TwinBox 2.1.59：锁对象对齐——put/remove/get 锁的是本 class 的
+        // monitor，这里却锁 PACKAGE_CACHE 实例，两把锁互不排斥（上游手滑）。
+        synchronized (PackageCacheManager.class) {
             return PACKAGE_CACHE.size();
         }
     }

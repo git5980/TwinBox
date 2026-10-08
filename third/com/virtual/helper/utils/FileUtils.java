@@ -180,8 +180,9 @@ public class FileUtils {
     }
 
     public static void writeToFile(InputStream dataIns, File target) throws IOException {
-        final int BUFFER = 1024;
-        BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(target));
+        // TwinBox 2.1.59：1KB → 256KB（V64 拷贝路径用；硬链化后仅作回退，但别留小缓冲地雷）
+        final int BUFFER = 256 * 1024;
+        BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(target), BUFFER);
         int count;
         byte data[] = new byte[BUFFER];
         while ((count = dataIns.read(data, 0, BUFFER)) != -1) {
@@ -240,15 +241,30 @@ public class FileUtils {
             FileChannel iChannel = inputStream.getChannel();
             FileChannel oChannel = outputStream.getChannel();
 
-            ByteBuffer buffer = ByteBuffer.allocate(1024);
-            while (true) {
-                buffer.clear();
-                int r = iChannel.read(buffer);
-                if (r == -1)
+            // TwinBox 2.1.59：原先是 1KB ByteBuffer 手写循环——100MB APK =
+            // 10 万次 read/write 系统调用，克隆慢的主犯。改 transferTo
+            // （内核 sendfile 零拷贝，加密存储上差距更大）。短读保护 +
+            // 大缓冲回退：个别内核/文件系统不支持时的兜底。
+            long size = source.length();
+            long done = 0;
+            while (done < size) {
+                long n = iChannel.transferTo(done, size - done, oChannel);
+                if (n <= 0) {
                     break;
-                buffer.limit(buffer.position());
-                buffer.position(0);
-                oChannel.write(buffer);
+                }
+                done += n;
+            }
+            if (done < size) {
+                iChannel.position(done);
+                ByteBuffer buffer = ByteBuffer.allocate(64 * 1024);
+                while (true) {
+                    buffer.clear();
+                    int r = iChannel.read(buffer);
+                    if (r == -1)
+                        break;
+                    buffer.flip();
+                    oChannel.write(buffer);
+                }
             }
         } finally {
             closeQuietly(inputStream);

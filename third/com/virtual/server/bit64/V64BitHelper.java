@@ -16,6 +16,7 @@ import com.lody.virtual.client.ipc.ProviderCall;
 import com.lody.virtual.helper.DexOptimizer;
 import com.lody.virtual.helper.compat.NativeLibraryHelperCompat;
 import com.lody.virtual.helper.utils.FileUtils;
+import com.lody.virtual.helper.utils.VLog;
 import com.lody.virtual.os.VEnvironment;
 import com.lody.virtual.os.VUserInfo;
 import com.lody.virtual.os.VUserManager;
@@ -41,7 +42,11 @@ public class V64BitHelper extends ContentProvider {
             "forceStop",
             "copyPackage",
             "uninstallPackage",
-            "cleanPackageData"
+            "cleanPackageData",
+            // TwinBox 2.1.59：64 位目录已由 :x 进程硬链就位，此方法只做
+            // lib 提取 + odex（跳过整份 APK 内存转发——老路径对 200MB 包
+            // 意味着 200MB byte[] + 200MB ashmem，大包必 OOM/超慢）。
+            "copyLibs64"
     };
 
     private static String getAuthority() {
@@ -97,6 +102,9 @@ public class V64BitHelper extends ContentProvider {
             // TwinBox 2.1.50：上游手滑——这里原本又写了一遍 METHODS[5]，
             // 导致 "cleanPackageData"（METHODS[6]）永远路由不到，静默返回 null。
             return cleanPackageData64(extras);
+        } else if (METHODS[7].equals(method)) {
+            // TwinBox 2.1.59：libs-only（APK 已硬链就位）
+            return copyLibs64(extras);
         }
         return null;
     }
@@ -307,6 +315,67 @@ public class V64BitHelper extends ContentProvider {
                     .addArg("user_ids", userIds)
                     .addArg("package_name", packageName)
                     .callSafely();
+        }
+    }
+
+    /**
+     * TwinBox 2.1.59：64 位侧 lib+odex（METHODS[7] 的服务端）。
+     * APK 本体已由调用方（:x 进程）硬链就位——这里不再整份转发 APK。
+     */
+    private static Bundle copyLibs64(Bundle extras) {
+        String packageName = extras.getString("package_name");
+        boolean success = false;
+        if (packageName != null) {
+            try {
+                File targetPath = VEnvironment.getPackageResourcePath64(packageName);
+                File libDir = VEnvironment.getAppLibDirectory64(packageName);
+                NativeLibraryHelperCompat.copyNativeBinaries(targetPath, libDir);
+                try {
+                    DexOptimizer.optimizeDex(targetPath.getPath(), VEnvironment.getOdexFile64(packageName).getPath());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                success = true;
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
+        }
+        Bundle res = new Bundle();
+        res.putBoolean("res", success);
+        return res;
+    }
+
+    /**
+     * TwinBox 2.1.59：64 位目录快速拷贝——硬链代替整份内存转发。
+     * 源 APK 是我们自己私有的文件（同 uid），protected_hardlinks 允许；
+     * 同一 /data 文件系统，Os.link 零 I/O、瞬时完成。更新/卸载语义不变：
+     * 更新 = 先 deleteDir 旧文件（unlink，64 侧链接保 inode）再链新文件，
+     * 两侧版本一致；卸载 64 侧 = unlink，不影响 32 侧。
+     * 失败（跨 fs / SELinux 拒链）回退老 copyPackage64 全量路径。
+     */
+    public static boolean copyPackage64Fast(String packagePath, String packageName) {
+        if (!VirtualCore.get().is64BitEngineInstalled()) {
+            return false;
+        }
+        File target64 = VEnvironment.getPackageResourcePath64(packageName);
+        try {
+            FileUtils.deleteDir(target64);
+            android.system.Os.link(packagePath, target64.getAbsolutePath());
+            VEnvironment.chmodPackageDictionary(target64);
+        } catch (Throwable linkFail) {
+            VLog.w("V64", "hardlink fail (%s), fallback to full copy: %s",
+                    String.valueOf(linkFail.getMessage()), packageName);
+            return copyPackage64(packagePath, packageName);
+        }
+        try {
+            Bundle res = getHelper()
+                    .methodName(METHODS[7])
+                    .addArg("package_name", packageName)
+                    .callSafely();
+            return res != null && res.getBoolean("res");
+        } catch (Throwable t) {
+            VLog.w("V64", "copyLibs64 call fail: %s", packageName);
+            return false;
         }
     }
 
