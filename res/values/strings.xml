@@ -68,4 +68,25 @@
     <string name="fake_field_bt_mac">蓝牙 MAC</string>
     <string name="fake_field_icc">SIM 序列号（ICCId）</string>
     <string name="fake_field_serial">序列号（Serial）</string>
+    <!-- TwinBox 2.1.58：容器文件管理器 + 恶意程序防护 -->
+    <string name="menu_files">容器文件</string>
+    <string name="dialog_ops_malware">恶意程序防护</string>
+    <string name="malware_editor_title">恶意程序防护 — %1$s (分身 #%2$d)</string>
+    <string name="malware_master_switch">加固模式：%1$s（内核级拒绝高危系统调用）</string>
+    <string name="malware_net_switch">断网加固：%1$s（内核级禁止联网，raw 调用也不通）</string>
+    <string name="malware_help">使用说明</string>
+    <string name="malware_help_text">加固模式：分身进程启动时装入 seccomp 过滤器（内核级），
+永久拒绝模块加载 / bpf / perf_event / ptrace / 跨进程内存读写等高危系统调用；恶意
+程序改用 raw syscall 也绕不过。\n\n断网加固：在加固模式之上，禁止创建联网 socket
+（INET / INET6 / PACKET），进程及派生子进程全部断网。binder 通道不受影响。\n\n
+生效时机：分身下次启动（正在运行的建议先结束再切换）。\n\n边界须知：本防护挡
+提权与外联，但同 uid 数据（容器内文件、TwinBox 设置）恶意程序仍可破坏——测试恶意
+程序请用一次性环境，勿登录任何账号。详见 docs/安全模型与恶意程序分析指南.md。</string>
+    <string name="malware_toast_on">加固模式已开启（下次启动生效）</string>
+    <string name="malware_toast_off">加固模式已关闭（下次启动生效）</string>
+    <string name="malware_toast_net_on">断网加固已开启（下次启动生效）</string>
+    <string name="malware_toast_net_off">断网加固已关闭（下次启动生效）</string>
+    <string name="malware_toast_need_master">请先开启加固模式</string>
+    <string name="malware_cfg_fail">无法读取设备配置</string>
+    <string name="title_files">容器文件</string>
 </resources>

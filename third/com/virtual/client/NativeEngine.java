@@ -389,6 +389,15 @@ public class NativeEngine {
 
     public static native void nativeConfigNetworkState(boolean netonOroff);
 
+    /**
+     * TwinBox 2.1.58：安装恶意程序防护 seccomp 过滤器（内核级）。
+     * 在 guest 进程任何应用代码运行前调用（bindApplication 早期）。
+     * blockNet=true 时叠加断网加固（inet/inet6/packet socket → EPERM）。
+     * 过滤器随 fork/exec 继承——guest 派生的子进程同样受约束。
+     * 实现：va2 Foundation/MalwareGuard.cpp（长名 JNI 导出，无需注册表）。
+     */
+    public static native void nativeInstallMalwareGuard(boolean blockNet);
+
     public static native void nativeConfigWhiteOrBlack(boolean isWhiteOrBlack);
 
     public static native void nativeConfigDomainToIp();

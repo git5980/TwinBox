@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TwinBox 2.1.58：文件条目（图标用字形，零外部依赖） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingLeft="@dimen/md_space_md"
+    android:paddingRight="@dimen/md_space_md"
+    android:paddingTop="@dimen/md_space_sm"
+    android:paddingBottom="@dimen/md_space_sm">
+
+    <TextView
+        android:id="@+id/fm_item_icon"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:gravity="center"
+        android:textColor="@color/md_primary"
+        android:textSize="18sp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="@dimen/md_space_sm"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/fm_item_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:textColor="@color/md_on_surface"
+            android:textSize="@dimen/md_type_body" />
+
+        <TextView
+            android:id="@+id/fm_item_sub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:textColor="@color/md_on_surface_tertiary"
+            android:textSize="@dimen/md_type_caption" />
+    </LinearLayout>
+</LinearLayout>

@@ -33,9 +33,19 @@ public class VDeviceConfig implements Parcelable {
         final List<String> iccIds = new ArrayList<>();
     }
 
-    public static final int VERSION = 3;
+    public static final int VERSION = 4;
 
     public boolean enable;
+
+    /**
+     * TwinBox 2.1.58：恶意程序防护（按分身粒度）。
+     * malwareGuard=开启 seccomp 内核级加固（bindApplication 早期装载，
+     * 拒绝高危 syscall：模块加载/bpf/perf/ptrace/process_vm_* 等）；
+     * netIsolation=断网加固（叠加 socket(AF_INET/INET6/PACKET) → EPERM，
+     * 内核级，raw syscall 亦不可绕）。详见 docs/安全模型与恶意程序分析指南.md。
+     */
+    public boolean malwareGuard;
+    public boolean netIsolation;
 
     public String deviceId;
     public String androidId;
@@ -70,9 +80,20 @@ public class VDeviceConfig implements Parcelable {
             dest.writeString(entry.getKey());
             dest.writeString(entry.getValue());
         }
+        dest.writeInt(this.malwareGuard ? 1 : 0);
+        dest.writeInt(this.netIsolation ? 1 : 0);
     }
 
     public VDeviceConfig(Parcel in) {
+        this(in, -1);
+    }
+
+    /**
+     * TwinBox 2.1.58：带文件版本的构造器。
+     * legacy=true（持久化文件 version<4，升级前落盘的旧数据）：不读尾部两个
+     * 新字段（旧数据里没有），默认关闭；跨 binder 的 CREATOR 路径走 v4 全读。
+     */
+    public VDeviceConfig(Parcel in, int fileVersion) {
         this.enable = in.readByte() != 0;
         this.deviceId = in.readString();
         this.androidId = in.readString();
@@ -86,6 +107,10 @@ public class VDeviceConfig implements Parcelable {
             String key = in.readString();
             String value = in.readString();
             this.buildProp.put(key, value);
+        }
+        if (fileVersion < 0 || fileVersion >= VERSION) {
+            this.malwareGuard = in.readInt() == 1;
+            this.netIsolation = in.readInt() == 1;
         }
     }
 

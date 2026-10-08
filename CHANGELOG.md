@@ -1945,6 +1945,53 @@ disabled 串消失（重开生效）、**新 .so 字节级比对一致**（含�
 `VActivityManagerService.java` + manifest（84 / 2.1.57）。**注意：.so 是重编译的，
 GitHub 上的 va2 仓库需要同步 SandboxFs.cpp 改动。**
 
+
+## 2.1.58：容器文件管理器 + 恶意程序防护（seccomp 内核级加固）
+
+### 背景（用户两问）
+①「给容器添加一个文件管理器」→ 容器文件：宿主进程直览/直管容器目录树。
+②「用容器调试恶意程序，怎么确保不穿透容器影响物理机」→ 先把真相说清
+（VirtualApp 类容器对守规矩 app 是仿真环境，对故意越狱的代码只有内核边界
+是真的；libc hook/binder 代理皆可被 raw syscall 绕过，不能当安全边界），
+然后把能内核级变硬的全部变硬。
+
+### 新增
+| # | 能力 | 实现位置 | 说明 |
+|---|---|---|---|
+| 1 | **容器文件管理器** | `FileExplorerActivity`（新增）+ `activity_files.xml`/`item_file.xml` | 浏览分身「SD 卡」与应用数据两套根；新建/重命名/删除/复制/剪切/粘贴/排序/详情；MD3 星云蓝令牌；**不提供对外部查看器打开**（文件不出容器） |
+| 2 | **恶意程序防护** | `MalwareGuard.cpp`（native，双 ABI）+ `VDeviceConfig` v4 + `VClient` bindApplication 早期 | 分身级开关：**加固模式**=seccomp BPF（内核级拒绝 mount/umount2/init_module/finit_module/delete_module/bpf/perf_event_open/ptrace/process_vm_*/keyctl/add_key/request_key/kexec*/reboot/swapon/off/open_by_handle_at/name_to_handle_at/fanotify_init/userfaultfd/pidfd_getfd/io_uring_setup/fsopen 族/socketcall）；**断网加固**=socket(AF_INET/INET6/PACKET)→EPERM。fork/exec 子进程全继承，raw syscall 不可绕 |
+| 3 | **UI 入口** | `MainActivity` ops 第 6 项 + 编辑器；`menu_main.xml` 加「容器文件」 | 多分身先选分身（与设备伪装同构）；断网是加固子集须先开总开关 |
+| 4 | **安全文档** | `docs/安全模型与恶意程序分析指南.md` | 两类防线本质区别（内核级 vs 用户态）、已有内核墙（uid/SELinux/scoped storage）、残余风险五条、分析操作建议 |
+
+### VDeviceConfig v4（持久化格式升级）
+`malwareGuard`/`netIsolation` 两字段入 parcel（尾部追加）；文件版本 3→4，
+**旧文件兼容读**（`VDeviceConfig(Parcel, fileVersion)`：version<4 不读尾部，
+默认关闭）——升级不丢设备伪装身份池。
+
+### 关键坑（记录）
+- **Android.mk 三段源列表**：LOCAL_SRC_FILES 定义四次（通用段 + arm64 覆盖 +
+  arm32 覆盖）——加源文件三段都要加，只加通用段会被覆盖静默丢弃。
+- aapt2 二进制 manifest 字符串池：ASCII 名也走 UTF-16 存储——字节级验证
+  manifest 要查 `utf-16-le` 编码，查 utf-8 会假阴性。
+- seccomp BPF 跳转偏移手数：socket 参数段 7 条指令，非 socket 调用
+  jf=7 跳整段落回默认放行（写 4 会误伤非 socket 调用）。
+
+### 验证
+15/15：FileExplorerActivity/seccomp 装载点/字段/UI 在 dex、**双 ABI 守卫
+符号+MWG 日志串在 .so 且字节级一致**、manifest UTF-16 池注册、字符串资源、
+2.1.57 三防线回归无损。
+
+### 真机验证路径
+1. 分身长按 → 恶意程序防护 → 开加固+断网 → 重启分身 → 装个要联网的
+   app 确认断网（网页转圈/超时）；logcat 找 `V|MWG: malware guard installed`；
+2. 加固模式跑正常分身（XPlayer 等）确认无误伤（重点：播放、下载）；
+3. 菜单 → 容器文件：浏览/新建/复制/删除，确认路径只落在容器目录树；
+4. 旧版本升级安装：设备伪装身份不丢（v4 兼容读）。
+
+需要同步：`MalwareGuard.cpp`（va2，**Android.mk 三段都加**）、`VDeviceConfig.java`/
+`DeviceInfoPersistenceLayer.java`/`NativeEngine.java`/`VClient.java`、`MainActivity.java`/
+`FileExplorerActivity.java`/两布局/strings/menu/manifest（85/2.1.58）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

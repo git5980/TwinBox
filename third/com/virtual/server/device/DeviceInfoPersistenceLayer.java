@@ -55,7 +55,7 @@ public class DeviceInfoPersistenceLayer extends PersistenceLayer {
         int size = p.readInt();
         while (size-- > 0) {
             int userId = p.readInt();
-            VDeviceConfig info = new VDeviceConfig(p);
+            VDeviceConfig info = new VDeviceConfig(p, version);
             infos.put(userId, info);
         }
     }

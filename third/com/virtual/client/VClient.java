@@ -382,6 +382,19 @@ public final class VClient extends IVClient.Stub {
         }
         VDeviceConfig deviceConfig = getDeviceConfig();
         VDeviceManager.get().applyBuildProp(deviceConfig);
+        // TwinBox 2.1.58：恶意程序防护（seccomp 内核级）。必须在任何 guest
+        // 代码（含 ContentProvider 实例化）之前装载——这里正好在 applyBuildProp
+        // 之后、引擎其余初始化之前。误装/重装无副作用（过滤器幂等）。
+        try {
+            if (deviceConfig != null && deviceConfig.malwareGuard) {
+                NativeEngine.nativeInstallMalwareGuard(deviceConfig.netIsolation);
+                dev.twinbox.app.TLog.i("V|MWG", "malware guard installed, pkg="
+                        + packageName + " netIsolation=" + deviceConfig.netIsolation);
+            }
+        } catch (Throwable guardT) {
+            // 装不上不能放行沉默：日志 + 继续（分析模式下宁可记明显错）
+            dev.twinbox.app.TLog.e("V|MWG", "install FAIL (seccomp) pkg=" + packageName, guardT);
+        }
         final boolean isSubRemote = VirtualCore.get().isPluginEngine();
         // Fix: com.loafwallet
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

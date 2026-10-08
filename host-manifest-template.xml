@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.twinbox.app"
-    android:versionCode="84"
-    android:versionName="2.1.57">
+    android:versionCode="85"
+    android:versionName="2.1.58">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -79,6 +79,13 @@
                 <data android:scheme="file" />
             </intent-filter>
         </activity>
+
+        <!-- TwinBox 2.1.58：容器内文件管理器（宿主进程实现，直接浏览容器
+             目录树；文件不出容器——不提供对外部查看器的打开方式） -->
+        <activity
+            android:name="dev.twinbox.app.FileExplorerActivity"
+            android:exported="false"
+            android:label="@string/title_files" />
 
         <activity
             android:name="dev.twinbox.app.BridgeActivity"

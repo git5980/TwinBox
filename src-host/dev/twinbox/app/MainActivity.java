@@ -342,6 +342,7 @@ public class MainActivity extends Activity {
                         getString(R.string.dialog_ops_kill),
                         getString(R.string.dialog_ops_uninstall),
                         getString(R.string.dialog_ops_fake_device),
+                        getString(R.string.dialog_ops_malware),
                         getString(R.string.dialog_ops_info),
                 }, new DialogInterface.OnClickListener() {
                     @Override
@@ -364,12 +365,110 @@ public class MainActivity extends Activity {
                             reload();
                         } else if (which == 3) {
                             showFakeDevice(e);
+                        } else if (which == 4) {
+                            // TwinBox 2.1.58：恶意程序防护（seccomp 内核级加固）
+                            showMalwareGuard(e);
                         } else {
                             showInfo(e);
                         }
                     }
                 })
                 .show();
+    }
+
+    /**
+     * TwinBox 2.1.58：恶意程序防护（按分身粒度）。
+     * 单分身直接进编辑器；多分身先选分身（与设备伪装同构）。
+     * 语义见 VDeviceConfig.malwareGuard/netIsolation 与
+     * docs/安全模型与恶意程序分析指南.md。生效于分身下次启动。
+     */
+    private void showMalwareGuard(final VBox.VAppEntry e) {
+        final int[] users = (e.users != null && e.users.length > 0) ? e.users : new int[]{e.userId};
+        if (users.length <= 1) {
+            showMalwareGuardEditor(users[0], e.label);
+            return;
+        }
+        String[] names = new String[users.length];
+        for (int i = 0; i < users.length; i++) {
+            com.lody.virtual.remote.VDeviceConfig cfg = VBox.getDeviceConfig(users[i]);
+            String state = cfg != null && cfg.malwareGuard
+                    ? getString(R.string.fake_device_state_on)
+                    : getString(R.string.fake_device_state_off);
+            names[i] = getString(R.string.fake_device_user_title, users[i], state);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.fake_device_pick_user, e.label))
+                .setItems(names, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        showMalwareGuardEditor(users[which], e.label);
+                    }
+                })
+                .show();
+    }
+
+    /**
+     * TwinBox 2.1.58：防护编辑器——总开关（seccomp 加固）+ 断网子开关 + 说明。
+     * 保存走 VDeviceManager.updateDeviceConfig（引擎侧持久化，与设备伪装同库）。
+     */
+    private void showMalwareGuardEditor(final int userId, final String appLabel) {
+        final com.lody.virtual.remote.VDeviceConfig cfg = VBox.getDeviceConfig(userId);
+        if (cfg == null) {
+            Toast.makeText(this, R.string.malware_cfg_fail, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final boolean master = cfg.malwareGuard;
+        final boolean net = cfg.netIsolation;
+        String on = getString(R.string.fake_device_state_on);
+        String off = getString(R.string.fake_device_state_off);
+        new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.malware_editor_title, appLabel, userId))
+                .setItems(new CharSequence[]{
+                        getString(R.string.malware_master_switch, master ? on : off),
+                        getString(R.string.malware_net_switch, net ? on : off),
+                        getString(R.string.malware_help),
+                }, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (which == 0) {
+                            cfg.malwareGuard = !master;
+                            saveMalwareCfg(userId, cfg);
+                            Toast.makeText(MainActivity.this, !master
+                                    ? R.string.malware_toast_on : R.string.malware_toast_off,
+                                    Toast.LENGTH_SHORT).show();
+                            showMalwareGuardEditor(userId, appLabel);
+                        } else if (which == 1) {
+                            if (!master && !net) {
+                                Toast.makeText(MainActivity.this, R.string.malware_toast_need_master,
+                                        Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+                            cfg.netIsolation = !net;
+                            saveMalwareCfg(userId, cfg);
+                            Toast.makeText(MainActivity.this, !net
+                                    ? R.string.malware_toast_net_on : R.string.malware_toast_net_off,
+                                    Toast.LENGTH_SHORT).show();
+                            showMalwareGuardEditor(userId, appLabel);
+                        } else {
+                            new AlertDialog.Builder(MainActivity.this)
+                                    .setTitle(R.string.malware_help)
+                                    .setMessage(R.string.malware_help_text)
+                                    .setPositiveButton(android.R.string.ok, null)
+                                    .show();
+                        }
+                    }
+                })
+                .show();
+    }
+
+    private void saveMalwareCfg(int userId, com.lody.virtual.remote.VDeviceConfig cfg) {
+        try {
+            com.lody.virtual.client.ipc.VDeviceManager.get().updateDeviceConfig(userId, cfg);
+            TLog.i("VBox", "saveMalwareCfg userId=" + userId
+                    + " guard=" + cfg.malwareGuard + " net=" + cfg.netIsolation);
+        } catch (Throwable t) {
+            TLog.e("VBox", "saveMalwareCfg fail", t);
+        }
     }
 
     /**
@@ -573,6 +672,11 @@ public class MainActivity extends Activity {
         int id = item.getItemId();
         // TwinBox 2.1.49：menu_install / menu_float 两项已删（与底部操作栏
         // 重复），这里只留「结束全部」。
+        if (id == R.id.menu_files) {
+            // TwinBox 2.1.58：容器内文件管理器
+            startActivity(new Intent(this, FileExplorerActivity.class));
+            return true;
+        }
         if (id == R.id.menu_kill_all) {
             VBox.killAll();
             Toast.makeText(this, R.string.toast_kill_all, Toast.LENGTH_SHORT).show();

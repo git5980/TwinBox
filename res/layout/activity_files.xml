@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TwinBox 2.1.58：容器文件管理器（MD3 令牌，星云蓝） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/md_surface"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/fm_path_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/md_surface_container"
+        android:ellipsize="start"
+        android:gravity="center_vertical"
+        android:paddingLeft="@dimen/md_space_md"
+        android:paddingRight="@dimen/md_space_md"
+        android:paddingTop="@dimen/md_space_sm"
+        android:paddingBottom="@dimen/md_space_sm"
+        android:singleLine="true"
+        android:textColor="@color/md_primary"
+        android:textSize="@dimen/md_type_body" />
+
+    <TextView
+        android:id="@+id/fm_info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/md_surface"
+        android:paddingLeft="@dimen/md_space_md"
+        android:paddingRight="@dimen/md_space_md"
+        android:paddingTop="@dimen/md_space_xs"
+        android:paddingBottom="@dimen/md_space_xs"
+        android:textColor="@color/md_on_surface_variant"
+        android:textSize="@dimen/md_type_label" />
+
+    <ListView
+        android:id="@+id/fm_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:cacheColorHint="@color/md_surface"
+        android:divider="@color/md_outline"
+        android:dividerHeight="1px" />
+
+    <TextView
+        android:id="@android:id/empty"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="空目录"
+        android:textColor="@color/md_text_tertiary"
+        android:textSize="@dimen/md_type_body"
+        android:visibility="gone" />
+</LinearLayout>
