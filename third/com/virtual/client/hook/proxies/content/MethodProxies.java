@@ -57,7 +57,24 @@ public class MethodProxies {
                 args[5] = Build.VERSION_CODES.LOLLIPOP_MR1;
             }
         }
-        Uri uri = (Uri) args[0];
+        // TwinBox 2.1.69：Android 16 notifyChange(Uri[]...) 批量新签名——
+        // 老强转 (Uri) args[0] 每次 ClassCastException（抖音 40.6 实锤，
+        // PushMultiProcessSharedProvider 高频触发），靠 hook 兜底 fallback
+        // 苟活。这里把 Uri[] 解包为逐个 Uri 处理，语义不变。
+        if (args[0] instanceof Uri[]) {
+            Uri[] uris = (Uri[]) args[0];
+            for (Uri u : uris) {
+                notifyChangeOne(who, method, args, u);
+            }
+            return 0;
+        }
+        return notifyChangeOne(who, method, args, (Uri) args[0]);
+    }
+
+    private static Object notifyChangeOne(Object who, Method method, Object[] args, Uri uri) throws Throwable {
+        if (uri == null) {
+            return method.invoke(who, args);
+        }
         if (isAppUri(uri)) {
             IContentObserver observer = (IContentObserver) args[1];
             boolean observerWantsSelfNotifications = (boolean) args[2];

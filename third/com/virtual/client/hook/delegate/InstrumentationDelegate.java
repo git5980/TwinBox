@@ -517,7 +517,14 @@ public class InstrumentationDelegate extends Instrumentation {
             if (avoidRecursive.beginCall(20)) {
                 return (ActivityResult) findDeclaredMethod(base, "execStartActivity", Context.class, IBinder.class, IBinder.class, Activity.class, Intent.class, Integer.TYPE, Bundle.class).invoke(base, new Object[]{context, iBinder, iBinder2, activity, intent, i, bundle});
             } else {
-                return (ActivityResult) findDeclaredMethod(root, "execStartActivity", Context.class, IBinder.class, IBinder.class, Activity.class, Intent.class, Integer.TYPE, Bundle.class).invoke(base, new Object[]{context, iBinder, iBinder2, activity, intent, i, bundle});
+                // TwinBox 2.1.69：重入断环——else 分支必须 invoke(root)。
+                // 原代码 findDeclaredMethod(root) 却 invoke(base)——字节
+                // Mira/Route 多层 Instrumentation hook 与我们的 delegate 互
+                // 相包装成环时（抖音 40.6 真机实锤，17 万行日志还原完整
+                // 调用环），重入 fallback 仍打回 base=环上家，环永不闭合，
+                // 4109KB 栈耗尽 StackOverflow → 主线程 ANR → GC 扫坏帧崩。
+                // root 是构造时保存的真原始 Instrumentation，直达系统。
+                return (ActivityResult) findDeclaredMethod(root, "execStartActivity", Context.class, IBinder.class, IBinder.class, Activity.class, Intent.class, Integer.TYPE, Bundle.class).invoke(root, new Object[]{context, iBinder, iBinder2, activity, intent, i, bundle});
             }
         } catch (InvocationTargetException e) {
             if (e.getCause() != null) {
@@ -537,7 +544,8 @@ public class InstrumentationDelegate extends Instrumentation {
             if (avoidRecursive.beginCall(21)) {
                 return (ActivityResult) findDeclaredMethod(base, "execStartActivity", Context.class, IBinder.class, IBinder.class, String.class, Intent.class, Integer.TYPE, Bundle.class).invoke(base, new Object[]{context, iBinder, iBinder2, str, intent, i, bundle});
             } else {
-                return (ActivityResult) findDeclaredMethod(root, "execStartActivity", Context.class, IBinder.class, IBinder.class, String.class, Intent.class, Integer.TYPE, Bundle.class).invoke(base, new Object[]{context, iBinder, iBinder2, str, intent, i, bundle});
+                // TwinBox 2.1.69：同上——重入断环走 root（原 bug：invoke(base)）
+                return (ActivityResult) findDeclaredMethod(root, "execStartActivity", Context.class, IBinder.class, IBinder.class, String.class, Intent.class, Integer.TYPE, Bundle.class).invoke(root, new Object[]{context, iBinder, iBinder2, str, intent, i, bundle});
             }
         } catch (InvocationTargetException e) {
             if (e.getCause() != null) {
