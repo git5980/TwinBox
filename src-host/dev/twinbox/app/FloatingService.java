@@ -236,6 +236,7 @@ public class FloatingService extends Service {
     private void snapTo(final int targetX) {
         cancelSnap();
         final int from = mDrawerLp.x;
+        final boolean opening = targetX <= (edgeX() + openX()) / 2;
         mSnapAnim = ValueAnimator.ofInt(from, targetX);
         mSnapAnim.setDuration(200);
         mSnapAnim.setInterpolator(new DecelerateInterpolator());
@@ -246,9 +247,33 @@ public class FloatingService extends Service {
                 applyLayout();
             }
         });
+        mSnapAnim.addListener(new android.animation.Animator.AnimatorListener() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                // TwinBox 2.1.65：每次展开时实时刷新面板——fillPanel 原先
+                // 只在 onCreate 调一次，用户「先开悬浮球再启动应用」时
+                // 拖出的面板里「运行中」区还是旧数据（空），小窗调出
+                // 根本无处可点（真机日志实锤：全程零 moveTaskToFront）。
+                if (opening) {
+                    fillPanel();
+                }
+            }
+
+            @Override
+            public void onAnimationStart(android.animation.Animator animation) {
+            }
+
+            @Override
+            public void onAnimationCancel(android.animation.Animator animation) {
+            }
+
+            @Override
+            public void onAnimationRepeat(android.animation.Animator animation) {
+            }
+        });
         mSnapAnim.start();
         // 箭头：展开态 ›（向右推回）；贴边态 ‹（向左拉出）
-        mHandle.setText(targetX <= (edgeX() + openX()) / 2 ? "›" : "‹");
+        mHandle.setText(opening ? "›" : "‹");
     }
 
     private void cancelSnap() {
@@ -269,6 +294,7 @@ public class FloatingService extends Service {
     // ---------------------------------------------------------------- 面板内容
 
     private void fillPanel() {
+        TLog.i("Float", "fillPanel: refreshing (running tasks + apps)");
         List<VBox.VAppEntry> apps;
         try {
             apps = VBox.listInstalled();
