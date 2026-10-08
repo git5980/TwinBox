@@ -57,6 +57,18 @@ public final class TLog {
     private static File sFile;             // DIRECT/PRIVATE 模式的文件
     private static Uri sUri;               // MEDIASTORE 模式的文件 uri
     private static BufferedWriter sWriter;
+
+    /**
+     * TwinBox 2.1.67：异步落盘队列。
+     * 原实现 write() 是 synchronized + 每条 flush——guest 高频 hook 日志
+     * （11 行/秒量级，多在主线程打）每条都同步写 FUSE 上的 MediaStore
+     * 文件，主线程被反复卡住（容器内应用卡顿的头号嫌疑）。
+     * 改造：logcat 镜像保持同步（便宜），文件落盘进队列，后台线程
+     * 批量写+flush。队列满丢弃（日志排障有 logcat 兜底，不反卡业务）。
+     */
+    private static final java.util.concurrent.LinkedBlockingQueue<String[]> sQueue =
+            new java.util.concurrent.LinkedBlockingQueue<>(2000);
+    private static Thread sWriterThread;
     private static final SimpleDateFormat TS =
             new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US);
     private static final SimpleDateFormat DAY =
@@ -102,7 +114,9 @@ public final class TLog {
                 sMode = MODE_MEDIASTORE;
                 sDir = null;
             }
-            rollIfNeeded();
+            // TwinBox 2.1.67：rollIfNeeded 移入后台线程（主线程零文件 I/O）。
+            // 首条 init 日志先进队列，由后台线程落盘。
+            startWriterThread();
             i("TLog", "log dir = " + dirDesc()
                     + (sMode == MODE_MEDIASTORE ? " (公共Download·免权限通道)" : ""));
         } catch (Throwable t) {
@@ -119,7 +133,7 @@ public final class TLog {
                 sDay = null;
                 sUri = null;
                 sFile = null;
-                rollIfNeeded();
+                startWriterThread();
                 e("TLog", "log dir = " + dirDesc() + " (私有目录·降级)", t);
             } catch (Throwable ignore) {
                 android.util.Log.e(TAG_PREFIX + "TLog", "init fail", ignore);
@@ -378,8 +392,15 @@ public final class TLog {
         return sw.toString();
     }
 
-    private static synchronized void write(String level, String tag, String msg, Throwable t) {
-        String line = TS.format(new Date()) + " " + level + "/" + tag + ": " + msg;
+    /**
+     * TwinBox 2.1.67：非 synchronized、零文件 I/O 的调用路径。
+     * - logcat 镜像同步（便宜，logcat 有自己的异步缓冲）；
+     * - D 级不再落文件（guest 权限查询/hook 探测类高频噪音占一半量，
+     *   排障需要时看 logcat）；
+     * - 其余进内存队列，后台 TB-logwriter 线程批量落盘。
+     * 崩溃时队列尾巴可能丢（毫秒级窗口）——logcat 镜像兜底。
+     */
+    private static void write(String level, String tag, String msg, Throwable t) {
         try {
             android.util.Log.println(
                     "E".equals(level) ? android.util.Log.ERROR
@@ -388,20 +409,76 @@ public final class TLog {
                     TAG_PREFIX + tag, msg + (t == null ? "" : " : " + t));
         } catch (Throwable ignore) {
         }
+        if (sMode == MODE_NONE || "D".equals(level)) {
+            return;
+        }
+        String line = TS.format(new Date()) + " " + level + "/" + tag + ": " + msg;
         try {
-            if (sWriter != null) {
-                rollIfNeeded();
-                sWriter.write(line);
-                sWriter.write('\n');
-                if (t != null) {
-                    sWriter.write(stackOf(t));
-                    sWriter.write('\n');
-                }
-                // 关键日志即时落盘：错误级别强制 flush，其余低频亦 flush（量小）
-                sWriter.flush();
+            // 队列满→丢弃本条（不反卡业务线程）
+            sQueue.offer(new String[]{line, t == null ? null : stackOf(t)});
+        } catch (Throwable ignore) {
+        }
+    }
+
+    /** 后台落盘线程：批量 drain + flush（500ms 空转周期）。 */
+    private static void startWriterThread() {
+        if (sWriterThread != null) {
+            return;
+        }
+        synchronized (TLog.class) {
+            if (sWriterThread != null) {
+                return;
             }
-        } catch (Throwable io) {
-            android.util.Log.e(TAG_PREFIX + "TLog", "file write fail", io);
+            sWriterThread = new Thread("TB-logwriter") {
+                @Override
+                public void run() {
+                    while (true) {
+                        try {
+                            String[] item = sQueue.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS);
+                            if (item == null) {
+                                // 空转周期也 flush 一次（roll 后可能有残余缓冲）
+                                idleFlush();
+                                continue;
+                            }
+                            rollIfNeeded();
+                            writeOne(item);
+                            // 批量 drain 队列残余（一次 flush 落一批）
+                            while ((item = sQueue.poll()) != null) {
+                                writeOne(item);
+                            }
+                            sWriter.flush();
+                        } catch (InterruptedException ie) {
+                            // 不退出：日志线程陪跑进程生命周期
+                        } catch (Throwable t) {
+                            // roll/写失败不能杀死日志线程——退避后继续
+                            try {
+                                Thread.sleep(1000);
+                            } catch (InterruptedException ignore) {
+                            }
+                        }
+                    }
+                }
+
+                private void writeOne(String[] item) throws IOException {
+                    sWriter.write(item[0]);
+                    sWriter.write('\n');
+                    if (item[1] != null) {
+                        sWriter.write(item[1]);
+                        sWriter.write('\n');
+                    }
+                }
+
+                private void idleFlush() {
+                    try {
+                        if (sWriter != null) {
+                            sWriter.flush();
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                }
+            };
+            sWriterThread.setDaemon(true);
+            sWriterThread.start();
         }
     }
 }
