@@ -2115,6 +2115,48 @@ makeApplication 返回 null。
 ### 验证
 8/8 全过（88/2.1.61，纯 Java）。
 
+
+## 2.1.62：广播注册包名校验适配（抖音 40.6 启动崩溃·真因修复）
+
+### 案件闭环（2.1.61 埋的证据链生效）
+2.1.61 的 callWithException 改造让真栈落进了 TwinBox 日志：
+```
+AwemeHostApplication.attachBaseContext → AppContextManager（字节通用框架）
+  → ContextWrapper.registerReceiver → ContextImpl.registerReceiverInternal
+  → IActivityManager$Stub$Proxy.registerReceiverWithFeature
+  → MethodInvocationStub.invokeOrigin(368)   ← hook 链放行原始调用
+  → SecurityException: Given caller package com.ss.android.ugc.aweme
+    is not running in process ProcessRecord{...:dev.twinbox.app:p0}
+```
+
+### 根因
+Android 16 BroadcastController.registerReceiverWithFeatureTraced 新增
+**caller package ↔ ProcessRecord 匹配校验**：广播注册打到真 AMS 时，
+callerPackage（guest 包名）与系统进程表里的宿主进程不匹配 → 拒绝。
+抖音 attach 阶段（AppContextManager）就注册系统广播 → makeApplication 炸。
+旧版本 Android 无此校验——这是又一记针对双开/容器全家桶的系统级收紧。
+
+### 修法
+沿用 2.1.5x 的 CALLER_PKG_ARG 集中改写表（TA 设计，护栏完备：仅当参数值
+等于当前 guest 包名时才替换为宿主包名，加错位置亦无害）：
+- `registerReceiverWithFeature` → 1
+- `registerReceiverWithFeatureForCompat` → 1
+- `registerReceiver` → 1
+（三个变体的 callerPackage 均在 caller 之后第一个 String，index 1。）
+放行前换宿主包名过校验；广播投递按 receiver 的 binder 对象回投进程，
+注册包名不参与分发——语义不变，系统侧身份校验通过。
+
+### 验证
+7/7（89/2.1.62，纯 Java）。
+
+### 真机验证路径
+1. 抖音分身启动：应过 attach（本次崩溃点）——若再崩，TwinBox 日志会有
+   下一段真栈（V|VC makeApplication FAILED 或 V|Mirror），继续按栈修；
+2. 广播功能：抖音能收到时间变化/屏幕亮灭等系统广播（不因改写丢事件）；
+3. 其他 guest（XPlayer 等）注册广播无回归。
+
+需要同步：`MethodParameterUtils.java`（表加 3 行）+ manifest（89/2.1.62）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术

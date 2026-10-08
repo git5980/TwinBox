@@ -82,6 +82,18 @@ public class MethodParameterUtils {
 		// ---- IActivityManager：PendingIntent ----
 		CALLER_PKG_ARG.put("getIntentSender", 1);
 		CALLER_PKG_ARG.put("getIntentSenderWithFeature", 1);
+		// ---- IActivityManager：广播注册面 ----
+		// TwinBox 2.1.62：Android 16 BroadcastController.registerReceiverWithFeatureTraced
+		// 新增 caller package ↔ ProcessRecord 匹配校验（SecurityException: Given
+		// caller package X is not running in process Y）。抖音 40.6 attach 阶段
+		// （AppContextManager）注册系统广播即触发，makeApplication 炸。
+		// 修法与表内其他成员一致：放行前把调用者包名列换成宿主包名。
+		// 广播投递按 receiver 的 binder 对象回投，注册包名不参与分发——
+		// 改写只影响系统侧身份校验，语义不变。
+		// 三个变体 callerPackage 均在 index 1（caller 之后第一个 String）。
+		CALLER_PKG_ARG.put("registerReceiverWithFeature", 1);
+		CALLER_PKG_ARG.put("registerReceiverWithFeatureForCompat", 1);
+		CALLER_PKG_ARG.put("registerReceiver", 1);
 	}
 
 	/**
