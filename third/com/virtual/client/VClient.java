@@ -1089,7 +1089,15 @@ public final class VClient extends IVClient.Stub {
     // guest 的裸路径 I/O（/sdcard 直写、native 库直写）被拉进容器目录树，
     // 配合 MediaScanner 钩子与 .nomedia，数据不出容器。若真机再次出现
     // SIGILL，先查 add_replace_item 的调用方是否塞了空串。
-    private static final boolean IO_REDIRECT_ENABLE = true;
+    //
+    // TwinBox 2.1.65：第二次 rmdir SIGILL 实锤（crash-video-player
+    // 08_10-12-28-33：Firebase 线程 BlockGuardOs.remove → invokeOrigin →
+    // bionic libc.so rmdir+0 直接 ILL_ILLOPC）。2.1.57 修的 SandboxFs 空条目
+    // 只是病因之一——Android 16 bionic 的 rmdir 符号/pac 布局与 hook 引擎
+    // 仍然不兼容。在 native 侧彻底排查前，按 2.1.30 的处置先例关闭总闸：
+    // guest 数据隔离靠 Java 层虚拟化 + MediaScanner 钩子 + .nomedia 兜底
+    // （native 裸路径写入 /sdcard 的场景会失去重定向——两害相权，崩溃更重）。
+    private static final boolean IO_REDIRECT_ENABLE = false;
 
     private HashSet<String> getMountPoints() {
         HashSet<String> mountPoints = new HashSet<>(3);

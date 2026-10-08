@@ -357,12 +357,11 @@ public class MainActivity extends Activity {
                             VirtualCore.get().killApp(e.packageName, e.userId);
                             Toast.makeText(MainActivity.this, "已结束", Toast.LENGTH_SHORT).show();
                         } else if (which == 2) {
-                            if (VBox.uninstall(e.packageName)) {
-                                Toast.makeText(MainActivity.this, "已卸载", Toast.LENGTH_SHORT).show();
-                            } else {
-                                Toast.makeText(MainActivity.this, "卸载失败", Toast.LENGTH_SHORT).show();
-                            }
-                            reload();
+                            // TwinBox 2.1.66：卸载加二次确认——真机日志实锤
+                            // 误触即删（ops 第 3 项手滑高发位，零确认直接执行，
+                            // 应用+数据即刻消失）。多分身时卸的是整个包
+                            // （引擎按包名卸载），确认文案必须说清。
+                            confirmUninstall(e);
                         } else if (which == 3) {
                             showFakeDevice(e);
                         } else if (which == 4) {
@@ -373,6 +372,35 @@ public class MainActivity extends Activity {
                         }
                     }
                 })
+                .show();
+    }
+
+    /**
+     * TwinBox 2.1.66：卸载二次确认。
+     * 卸载是破坏性操作（引擎按包名卸载：应用 + 全部分身 + 容器内数据，
+     * 不可恢复），误触零确认直接删（真机日志 12:36:32 实锤——用户长按
+     * 想看别的，点中第 3 项「卸载」，应用即刻消失）。
+     */
+    private void confirmUninstall(final VBox.VAppEntry e) {
+        int copies = e.copyCount();
+        String msg = "将卸载「" + (e.label == null ? e.packageName : e.label) + "」"
+                + (copies > 1 ? "（含全部 " + copies + " 个分身）" : "")
+                + "，并删除其在容器内的全部数据。\n\n此操作不可恢复。";
+        new AlertDialog.Builder(this)
+                .setTitle("卸载确认")
+                .setMessage(msg)
+                .setPositiveButton("卸载", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (VBox.uninstall(e.packageName)) {
+                            Toast.makeText(MainActivity.this, "已卸载", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(MainActivity.this, "卸载失败", Toast.LENGTH_SHORT).show();
+                        }
+                        reload();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 

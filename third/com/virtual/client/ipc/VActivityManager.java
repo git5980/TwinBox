@@ -394,7 +394,9 @@ public class VActivityManager {
     public void finishActivity(IBinder token) {
         Activity activity = findActivityByToken(token);
         if (activity == null) {
-            VLog.e("VActivityManager", "finishActivity fail : activity = null");
+            // TwinBox 2.1.66：卸载/杀进程尾声时 activity 已销毁属正常时序，
+            // E 级噪音（用户日志里被误当异常上报）——降 I。
+            VLog.i("VActivityManager", "finishActivity: activity already gone (shutdown race)");
             return;
         }
         while (true) {
