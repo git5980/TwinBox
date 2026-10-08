@@ -62,13 +62,27 @@ public class RefMethod<T> {
         try {
             return (T) this.method.invoke(receiver, args);
         } catch (InvocationTargetException e) {
-            if (e.getCause() != null) {
-                e.getCause().printStackTrace();
-            } else {
-                e.printStackTrace();
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            cause.printStackTrace();
+            // TwinBox 2.1.61：被吞的异常同步落 TwinBox 日志文件——printStackTrace
+            // 只进 logcat 标准流，用户导出常抓不到，真死因就这么丢过一次
+            // （抖音 40.6 makeApplication 事件）。行为不变（仍返回 null），
+            // 只是把现场留下来。
+            try {
+                dev.twinbox.app.TLog.e("V|Mirror", "swallowed exception from "
+                        + this.method.getDeclaringClass().getSimpleName() + "."
+                        + this.method.getName(), cause);
+            } catch (Throwable ignore) {
+                // TLog 不可用时退回纯 printStackTrace（别让日志工具反杀框架）
             }
         } catch (Throwable e) {
             e.printStackTrace();
+            try {
+                dev.twinbox.app.TLog.e("V|Mirror", "swallowed throwable from "
+                        + this.method.getDeclaringClass().getSimpleName() + "."
+                        + this.method.getName(), e);
+            } catch (Throwable ignore) {
+            }
         }
         return null;
     }

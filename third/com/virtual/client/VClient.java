@@ -633,10 +633,23 @@ public final class VClient extends IVClient.Stub {
 //            if(LoadedApk.mApplication != null) {
 //                LoadedApk.mApplication.set(data.info, null);
 //            }
-            mInitialApplication = LoadedApk.makeApplication.call(data.info, false, null);
+            // TwinBox 2.1.61：callWithException——原 RefMethod.call 会把被调方法
+            // 内部的异常吞掉（只 printStackTrace 到 System.err，logcat 导出常
+            // 抓不到）再 return null，guest 的真实死因就这么消失（抖音 40.6
+            // 实测：makeApplication 返回 null → 下一行 getClass() NPE，真栈
+            // 无人见过）。改抛真因，让下面的 catch 原样写进 TwinBox 日志文件。
+            mInitialApplication = LoadedApk.makeApplication.callWithException(data.info, false, null);
         } catch (Throwable e) {
             dev.twinbox.app.TLog.e("V|VC", "makeApplication FAILED for " + packageName, e);
             throw new RuntimeException("Unable to makeApplication", e);
+        }
+        if (mInitialApplication == null) {
+            // AOSP makeApplication 没有「正常返回 null」的路径——到这说明
+            // 走了非标准分支（厂商魔改/极端场景）。明确报错，不再让下面
+            // getClass() 甩出无意义 NPE。
+            dev.twinbox.app.TLog.e("V|VC", "makeApplication returned NULL for " + packageName
+                    + " (no exception thrown — non-standard framework path?)");
+            throw new RuntimeException("makeApplication returned NULL: " + packageName);
         }
         dev.twinbox.app.TLog.i("V|VC", "makeApplication OK: " + mInitialApplication.getClass().getName()
                 + " — calling app onCreate...");

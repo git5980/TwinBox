@@ -2079,6 +2079,42 @@ GitHub 上的 va2 仓库需要同步 SandboxFs.cpp 改动。**
 需要同步：`InstallCenter.java`（新）+ `InstallActivity.java` +
 `V64BitHelper.java`（fallback 链）+ strings/布局 + manifest（87/2.1.60）。
 
+
+## 2.1.61：makeApplication 吞异常修复（抖音 40.6 启动 NPE 案·证据链完善）
+
+### 现象（真机日志三件套）
+抖音 40.6 克隆成功（2.1.60 OOM 修复生效）但分身启动即崩：
+`NPE at VClient.bindApplicationNoCheck:641`——即 `mInitialApplication.getClass()`，
+makeApplication 返回 null。
+
+### 破案链
+1. TLog 显示 636 行调用前的最后一步正常：dex 打开（2.5s）、抖音
+   libsm_impl.so（Sophix 热补）加载、attach 阶段 pref 写入——**抖音
+   Application 的初始化确实跑起来了**；
+2. 无 "makeApplication FAILED" 记录 → 调用没抛异常 → **返回了 null**；
+3. AOSP makeApplication 不存在「正常返回 null」路径 → 唯一解释：内部
+   抛了异常，被 `RefMethod.call` 的 catch(InvocationTargetException)
+   **吞掉**（只 printStackTrace 到 System.err——本次 logcat 导出恰好
+   没抓到 System.err），然后 return null → 641 行 NPE；
+4. XPlayer 正常 = 框架路径本身没坏，是抖音 init 抛了个我们从未见过的真异常。
+
+### 修法（可观测性优先，不猜不赌）
+1. `VClient`：`makeApplication.call` → **`callWithException`**（解包并
+   rethrow 真因）→ 现有的 catch 会把**完整真栈写进 TwinBox 日志文件**；
+2. `VClient`：null 守卫——万一真有无异常的 null 路径，明确报错而非裸 NPE；
+3. `mirror.RefMethod.call`（全框架收益）：吞异常分支同步 `TLog.e("V|Mirror")`
+   落文件。行为零变化（仍返回 null），但从此**任何被 mirror 吞掉的异常
+   都有尸检档案**。
+
+### 下一步
+真机重跑抖音分身 → 崩溃 → 拉 TwinBox 日志：里面会有
+`V|VC makeApplication FAILED for com.ss.android.ugc.aweme` + 真异常
+完整栈（或 `V|Mirror swallowed exception from LoadedApk.makeApplication`）。
+拿到真栈才能做针对性修复（不猜）。
+
+### 验证
+8/8 全过（88/2.1.61，纯 Java）。
+
 ## 改造清单（相对 VirtualApp-2）
 - xdja 安全芯片外部 jar → 6 个行为桩（失败码路径，安全退出）
 - support-v4/v7 → 注解桩 + ActivityCompat 手术
