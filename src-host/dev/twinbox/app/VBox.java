@@ -402,55 +402,133 @@ public class VBox {
         return out;
     }
 
+    /** 从容器引擎解析 guest 的启动 Intent（launchInner 的 144-170 行同款链路）。 */
+    private static Intent buildLaunchIntent(Context ctx, String packageName, int userId) {
+        VirtualCore core = VirtualCore.get();
+        Intent i = null;
+        try {
+            i = core.getLaunchIntent(packageName, userId);
+        } catch (Throwable t) {
+            TLog.e("VBox", "getLaunchIntent EXCEPTION", t);
+        }
+        if (i == null) {
+            String cls = getSavedLauncher(ctx, packageName);
+            if (cls != null) {
+                i = new Intent(Intent.ACTION_MAIN);
+                i.setClassName(packageName, cls);
+            }
+        }
+        i = fixLauncherFromApk(packageName, userId, i);
+        if (i == null || i.getComponent() == null) {
+            return null;
+        }
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return i;
+    }
+
+    /** 小窗默认边界：56% 宽 × 74% 高，水平居中，顶部留 10%。 */
+    private static android.graphics.Rect freeformBounds(Context ctx) {
+        try {
+            WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+            android.graphics.Point p = new android.graphics.Point();
+            wm.getDefaultDisplay().getRealSize(p);
+            int w = (int) (p.x * 0.56f), h = (int) (p.y * 0.74f);
+            int l = (p.x - w) / 2, t = (int) (p.y * 0.10f);
+            return new android.graphics.Rect(l, t, l + w, t + h);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /**
-     * TwinBox 2.1.64：把容器应用 task 以 freeform 小窗调出（VMOS 式）。
-     * windowing 切换：FREEFORM 小窗 ⇄ FULLSCREEN 全屏。
-     * REORDER_TASKS（normal 权限）允许宿主移动自己名义的 task
-     * （guest task 以 stub 名义注册，归属宿主）。
-     * ColorOS 不放行 freeform 时回退为全屏调出（不失败，只降级）。
-     *
-     * @param ctx    宿主 context
-     * @param taskId 系统侧真实 task id
-     * @param toFreeform true=小窗；false=全屏
-     * @return 实际生效的模式（"freeform"/"fullscreen"/"fail"）
+     * 读回系统侧 task 的 windowingMode（1=fullscreen 5=freeform 0=undefined）。
+     * getAppTasks 只返回自己包的 task —— virtual_task 以宿主 stub 名义注册，正好可见。
+     * TaskInfo.configuration 是 hidden 字段，走反射逐级向上找。
      */
-    public static String showTaskInWindow(Context ctx, int taskId, boolean toFreeform) {
+    private static int readTaskWindowing(Context ctx, int taskId) {
         try {
             ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
-            if (am == null) {
+            for (ActivityManager.AppTask t : am.getAppTasks()) {
+                ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
+                if (ri == null || ri.taskId != taskId) {
+                    continue;
+                }
+                Class<?> k = ri.getClass();
+                while (k != null) {
+                    try {
+                        java.lang.reflect.Field fCfg = k.getDeclaredField("configuration");
+                        fCfg.setAccessible(true);
+                        Object cfg = fCfg.get(ri);
+                        if (cfg != null) {
+                            java.lang.reflect.Field fW = cfg.getClass().getField("windowingMode");
+                            return fW.getInt(cfg);
+                        }
+                        break;
+                    } catch (NoSuchFieldException e) {
+                        k = k.getSuperclass();
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            TLog.w("VBox", "readTaskWindowing: " + t);
+        }
+        return -1;
+    }
+
+    /**
+     * TwinBox 2.1.71：真小窗重写（诚实化）。
+     * 2.1.64-70 的旧实现（moveTaskToFront + windowing options）被系统静默
+     * 忽略——真机 23:20-23:21 七连 toggle 实锤：task AppBounds 始终全屏、
+     * ColorOS FlexibleTaskController 拦截（"not a flexible freeform window
+     * application"）。winOk=true 只是反射调用成功，不是生效。
+     * 正路 = startActivity 携带 setLaunchWindowingMode(FREEFORM)+launchBounds，
+     * 与系统「多任务/长按图标小窗打开」同源（ActivityStarter 对已存在 task
+     * 也会应用 windowing）。引擎 options 直通系统层。
+     * 生效验证 = 启动 800ms 后读回 task windowingMode；AOSP freeform 总闸
+     * （enable_freeform_support）没开时直接返回 "guide" 让调用方转系统
+     * 官方替代路径，不白折腾。
+     * 【须在后台线程调用】（内含 800ms 等待）。
+     *
+     * @return freeform / fullscreen / guide（系统未开自由窗）/ denied（被拒） / fail
+     */
+    public static String showTaskInWindow(Context ctx, int taskId, String pkg, int userId, boolean toFreeform) {
+        try {
+            if (toFreeform) {
+                int ff = android.provider.Settings.Global.getInt(
+                        ctx.getContentResolver(), "enable_freeform_support", 0);
+                if (ff == 0) {
+                    TLog.i("VBox", "freeform: enable_freeform_support=0 → guide");
+                    return "guide";
+                }
+            }
+            Intent i = buildLaunchIntent(ctx, pkg, userId);
+            if (i == null) {
+                TLog.w("VBox", "freeform: no launch intent for " + pkg);
                 return "fail";
             }
             ActivityOptions opts = ActivityOptions.makeBasic();
-            // TwinBox 2.1.64：setLaunchWindowingMode 走反射——编译期 ECJ
-            // 解析 android-34 时报 undefined（方法 API 31+，平台 jar 里可能
-            // 被 @hide 或签名差异挡了）。反射 + 运行时探测更稳：ColorOS
-            // 不放行 freeform 时降级全屏，调用点已兜底。
-            boolean winOk = setWindowing(opts, toFreeform ? 5 /* FREEFORM */ : 1 /* FULLSCREEN */);
-            if (toFreeform && winOk) {
-                WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
-                android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
-                wm.getDefaultDisplay().getRealMetrics(dm);
-                int w = (int) (dm.widthPixels * 0.72f);
-                int h = (int) (dm.heightPixels * 0.78f);
-                int x = dm.widthPixels - w;
-                int y = (int) (dm.heightPixels * 0.06f);
-                opts.setLaunchBounds(new Rect(x, y, x + w, y + h));
+            boolean winSet = setWindowing(opts, toFreeform ? 5 /* FREEFORM */ : 1 /* FULLSCREEN */);
+            if (toFreeform && winSet) {
+                android.graphics.Rect b = freeformBounds(ctx);
+                if (b != null) {
+                    opts.setLaunchBounds(b);
+                }
             }
-            am.moveTaskToFront(taskId, 0, opts.toBundle());
-            TLog.i("VBox", "moveTaskToFront taskId=" + taskId
-                    + " freeform=" + toFreeform + " winOk=" + winOk);
-            return toFreeform && winOk ? "freeform" : "fullscreen";
-        } catch (Throwable t) {
-            TLog.w("VBox", "freeform moveTaskToFront fail (fallback fullscreen): " + t);
-            // ColorOS 拒 freeform 时降级：普通调出（窗口模式随系统）
-            try {
-                ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
-                am.moveTaskToFront(taskId, 0);
-                return "fullscreen";
-            } catch (Throwable t2) {
-                TLog.e("VBox", "moveTaskToFront total fail", t2);
+            int res = com.lody.virtual.client.ipc.VActivityManager.get()
+                    .startActivity(i, null, null, winSet ? opts.toBundle() : null, null, 0, userId);
+            TLog.i("VBox", "freeform startActivity res=" + res + " mode=" + (toFreeform ? 5 : 1));
+            if (res != 0) {
                 return "fail";
             }
+            android.os.SystemClock.sleep(800);
+            int wm = readTaskWindowing(ctx, taskId);
+            boolean ok = toFreeform ? wm == 5 : (wm == 1 || wm == 0);
+            TLog.i("VBox", "freeform verify taskId=" + taskId + " windowing=" + wm
+                    + " want=" + (toFreeform ? 5 : 1) + " ok=" + ok);
+            return ok ? (toFreeform ? "freeform" : "fullscreen") : "denied";
+        } catch (Throwable t) {
+            TLog.e("VBox", "showTaskInWindow fail", t);
+            return "fail";
         }
     }
 

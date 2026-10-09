@@ -336,20 +336,43 @@ public class FloatingService extends Service {
                 item.setTextColor(0xFF5B8CFF);
                 item.setPadding(28, 22, 28, 22);
                 item.setTextSize(14);
-                // 小窗 ⇄ 全屏 toggle：点一下从边缘拉出小窗，再点全屏，再点小窗
+                // 小窗 ⇄ 全屏 toggle：点一下从边缘拉出小窗，再点全屏，再点小窗。
+                // 2.1.71：调用挪后台线程（内部有 800ms 生效验证等待），
+                // guide/denied 时给 ColorOS 官方替代路径（系统级最近任务小窗）。
                 item.setOnClickListener(new View.OnClickListener() {
                     @Override
-                    public void onClick(View v) {
-                        boolean toFreeform = !v.isSelected();
+                    public void onClick(final View v) {
+                        final boolean toFreeform = !v.isSelected();
                         v.setSelected(toFreeform);
-                        String r = VBox.showTaskInWindow(FloatingService.this, ti.taskId, toFreeform);
-                        Toast.makeText(FloatingService.this,
-                                "freeform".equals(r) ? "小窗已拉出（再点全屏）"
-                                        : "fullscreen".equals(r) ? "已切全屏（再点回小窗）" : "调出失败",
-                                Toast.LENGTH_SHORT).show();
-                        if ("fail".equals(r)) {
-                            v.setSelected(false);
-                        }
+                        final String pkg0 = pkg;
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                final String r = VBox.showTaskInWindow(FloatingService.this,
+                                        ti.taskId, pkg0, 0, toFreeform);
+                                new android.os.Handler(android.os.Looper.getMainLooper())
+                                        .post(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                String msg;
+                                                if ("freeform".equals(r)) {
+                                                    msg = "小窗已拉出（再点全屏）";
+                                                } else if ("fullscreen".equals(r)) {
+                                                    msg = "已切全屏（再点回小窗）";
+                                                } else if ("guide".equals(r) || "denied".equals(r)) {
+                                                    msg = "本系统未开放应用小窗权限。替代：最近任务长按"
+                                                            + " TwinBox 卡片 → 选「小窗」（系统级，立即可用）";
+                                                    v.setSelected(false);
+                                                } else {
+                                                    msg = "调出失败";
+                                                    v.setSelected(false);
+                                                }
+                                                Toast.makeText(FloatingService.this, msg,
+                                                        Toast.LENGTH_LONG).show();
+                                            }
+                                        });
+                            }
+                        }, "tb-freeform").start();
                     }
                 });
                 box.addView(item);
