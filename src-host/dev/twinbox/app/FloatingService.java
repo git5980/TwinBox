@@ -82,6 +82,8 @@ public class FloatingService extends Service {
     private boolean mGuestOpen;      // 窗户全开态（应用全屏，球贴左缘）
     private int mPullTaskId = -1;    // 窗户目标 task（系统侧）
     private String mPullLabel = "";
+    private String mPullPkg = "";     // 窗户目标包名（task 死了重启用）
+    private int mBeneathTaskId = -1;  // 窗户底下的 task（拉出前前台，收回时恢复它）
     private List<com.lody.virtual.remote.AppTaskInfo> mRunCache;
     /** 包名 → 应用名缓存（fillPanel 维护，refreshRunCache 取 label 用） */
     private final java.util.Map<String, String> mLabelByPkg = new java.util.HashMap<String, String>();
@@ -320,8 +322,81 @@ public class FloatingService extends Service {
         showCurtain();
         // 拖出：把真应用瞬时调到前台（窗帘底下），全程 live 内容
         if (mWinPullOut && mPullTaskId >= 0) {
-            bringGuestToFront();
+            // 2.1.73：先记住窗户底下的 task（收回时恢复它，绝不拉宿主主界面）
+            mBeneathTaskId = captureBeneathTask();
+            bringGuestRobust();
         }
+    }
+
+    /**
+     * 2.1.73：拉出前记一下当前前台 task（= 窗户底下的界面）。
+     * getRunningTasks 只能看到自己 uid 的 task（guest 以宿主 stub 名义注册，
+     * 同 uid 可见）——拿得到宿主自己的；拿不到（别的 app/桌面）返回 -1，
+     * 收回时走 HOME 兜底。
+     */
+    private int captureBeneathTask() {
+        try {
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            List<android.app.ActivityManager.RunningTaskInfo> l = am.getRunningTasks(1);
+            if (l != null && !l.isEmpty() && l.get(0).taskId != mPullTaskId) {
+                return l.get(0).taskId;
+            }
+        } catch (Throwable t) {
+            TLog.w("Float", "captureBeneath fail: " + t);
+        }
+        return -1;
+    }
+
+    /**
+     * 2.1.73：拉出健壮化（修「透明界面」）。
+     * 根因：moveTaskToFront 对被系统冻结（o-stop）/已死的 task 无效——task
+     * 拉回来了但进程不恢复 → 透明。策略：
+     *  1) 系统侧 task 已不存在 → 直接 VBox.launch 重启（窗帘盖着启动过程）；
+     *  2) move 后 2.4s 内没到前台 → 再补一次 launch（冷恢复慢/被冻结）。
+     * 后台线程跑，不卡手势。
+     */
+    private void bringGuestRobust() {
+        final int taskId = mPullTaskId;
+        final String pkg = mPullPkg;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.app.ActivityManager am =
+                            (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                    boolean alive = false;
+                    try {
+                        for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
+                            android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
+                            if (ri != null && ri.taskId == taskId) {
+                                alive = true;
+                                break;
+                            }
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                    if (alive) {
+                        am.moveTaskToFront(taskId, android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
+                        TLog.i("Float", "win: moveTaskToFront " + taskId);
+                    } else if (pkg != null && pkg.length() > 0) {
+                        TLog.w("Float", "win: task " + taskId + " gone → relaunch " + pkg);
+                        VBox.launch(FloatingService.this, pkg, 0);
+                        return; // launch 链自带恢复
+                    }
+                    // 确认循环：最多 2.4s
+                    for (int i = 0; i < 12 && !isGuestFront(); i++) {
+                        android.os.SystemClock.sleep(200);
+                    }
+                    if (!isGuestFront() && pkg != null && pkg.length() > 0) {
+                        TLog.w("Float", "win: not front after 2.4s → relaunch " + pkg);
+                        VBox.launch(FloatingService.this, pkg, 0);
+                    }
+                } catch (final Throwable t) {
+                    TLog.e("Float", "bringGuestRobust fail", t);
+                }
+            }
+        }, "tb-win").start();
     }
 
     private void showCurtain() {
@@ -358,6 +433,8 @@ public class FloatingService extends Service {
         }
         mCurtainTitle.setText(mPullLabel == null || mPullLabel.isEmpty() ? "容器应用" : mPullLabel);
         mCurtainHint.setText(mWinPullOut ? "‹ 继续向左拖出 · 松手全屏打开" : "继续向右拖 · 松手收起 ›");
+        // 2.1.73：先定位再上屏——修「addView 瞬间 translationX=0 全屏黑一帧」闪现
+        mCurtain.setTranslationX(mWinPullOut ? mDrawerLp.x : mDrawerLp.x - mScreenW);
         if (!mCurtainOn) {
             try {
                 mWm.addView(mCurtain, mCurtainLp);
@@ -431,11 +508,13 @@ public class FloatingService extends Service {
         dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
     }
 
-    /** 窗户收回：应用送后台（宿主回前台，窗帘盖着无感切换），球回贴边。 */
+    /** 窗户收回：应用送后台，球回贴边。 */
     private void winClose() {
         mGuestOpen = false;
         mHandle.setText("‹");
-        moveHostToFront();
+        // 2.1.73：恢复「窗户底下的界面」（拉出前记的 task / HOME 兜底），
+        // 绝不拉宿主主界面——用户反馈：收回后见到的应是原来的界面。
+        restoreBeneath();
         ballAnimTo(edgeX());
         dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
         // 面板恢复（下次拖动/点按可用）
@@ -443,6 +522,51 @@ public class FloatingService extends Service {
         if (panel != null) {
             panel.setVisibility(View.VISIBLE);
         }
+    }
+
+    /**
+     * 2.1.73：收回时恢复窗户底下的界面。
+     * - 拉出前记到的 task（宿主 uid 内可见）→ move 回来；
+     * - 记不到（窗户下面是桌面/别的 app）→ 发 HOME 回桌面，
+     *   launcher 起来把 guest 挤后台。窗帘盖着整个切换，无感。
+     */
+    private void restoreBeneath() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (mBeneathTaskId >= 0) {
+                        android.app.ActivityManager am =
+                                (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                        boolean alive = false;
+                        try {
+                            for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
+                                android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
+                                if (ri != null && ri.taskId == mBeneathTaskId) {
+                                    alive = true;
+                                    break;
+                                }
+                            }
+                        } catch (Throwable ignore) {
+                        }
+                        if (alive) {
+                            am.moveTaskToFront(mBeneathTaskId,
+                                    android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
+                            TLog.i("Float", "win: beneath task " + mBeneathTaskId + " restored");
+                            return;
+                        }
+                    }
+                    // HOME 兜底：回桌面（不拉宿主主界面）
+                    Intent home = new Intent(Intent.ACTION_MAIN);
+                    home.addCategory(Intent.CATEGORY_HOME);
+                    home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(home);
+                    TLog.i("Float", "win: HOME (beneath restore fallback)");
+                } catch (Throwable t) {
+                    TLog.w("Float", "restoreBeneath fail: " + t);
+                }
+            }
+        }, "tb-win-close").start();
     }
 
     /** 窗户目标预取/刷新（DOWN 时调一次保证数据新鲜，label 用面板缓存）。 */
@@ -465,6 +589,7 @@ public class FloatingService extends Service {
                     String pkg = t0.baseIntent != null && t0.baseIntent.getComponent() != null
                             ? t0.baseIntent.getComponent().getPackageName()
                             : (t0.topActivity != null ? t0.topActivity.getPackageName() : "?");
+                    mPullPkg = pkg == null ? "" : pkg;
                     String label = mLabelByPkg != null ? mLabelByPkg.get(pkg) : null;
                     mPullLabel = label != null ? label : pkg;
                 }
@@ -503,37 +628,6 @@ public class FloatingService extends Service {
                     && l.get(0).taskId == mPullTaskId;
         } catch (Throwable t) {
             return false;
-        }
-    }
-
-    private void bringGuestToFront() {
-        try {
-            android.app.ActivityManager am =
-                    (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-            am.moveTaskToFront(mPullTaskId, android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
-            TLog.i("Float", "win: guest task " + mPullTaskId + " to front");
-        } catch (Throwable t) {
-            TLog.e("Float", "moveTaskToFront fail", t);
-        }
-    }
-
-    /** 应用收回后台：宿主自己回前台即可把 guest 挤后台（窗帘盖着，无感）。 */
-    private void moveHostToFront() {
-        try {
-            android.app.ActivityManager am =
-                    (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-            for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
-                android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
-                if (ri != null && ri.baseIntent != null && ri.baseIntent.getComponent() != null
-                        && getPackageName().equals(ri.baseIntent.getComponent().getPackageName())
-                        && ri.taskId != mPullTaskId) {
-                    am.moveTaskToFront(ri.taskId, android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
-                    TLog.i("Float", "win: host task " + ri.taskId + " to front (guest back)");
-                    return;
-                }
-            }
-        } catch (Throwable t) {
-            TLog.w("Float", "moveHostToFront fail: " + t);
         }
     }
 
