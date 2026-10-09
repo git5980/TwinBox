@@ -589,7 +589,22 @@ public class FloatingService extends Service {
                     }
                     int res = VBox.launchToDisplay(FloatingService.this, pkg, 0, displayId);
                     if (res != 0) {
-                        TLog.w("Float", "v2: launchToDisplay res=" + res);
+                        // 2.2.5：launch 失败立即降级 v1——之前会继续跑 verify，
+                        // 而空屏也会推帧（壁纸/空内容）→ timestamp 前进 →
+                        // verify 假阳性 live=true → mV2Ready 卡在假就绪，
+                        // 用户看到的是"没效果"（空白浮窗/黑屏）。
+                        TLog.w("Float", "v2: launchToDisplay res=" + res + " → immediate v1");
+                        new android.os.Handler(android.os.Looper.getMainLooper())
+                                .post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        sLastV2Fail = android.os.SystemClock.uptimeMillis();
+                                        destroyWinV2();
+                                        mBeneathTaskId = captureBeneathTask();
+                                        bringGuestRobust();
+                                    }
+                                });
+                        return;
                     }
                     verifyV2Async(displayId);
                 } catch (Throwable t) {

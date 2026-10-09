@@ -107,13 +107,27 @@ public final class VirtualScreen {
             sW = p.x;
             sH = p.y;
             sDpi = dm2.densityDpi;
-            // OWN_CONTENT_ONLY + projection token = 免镜像权限 + 可跨进程 launch。
-            // android-34 平台 jar 的签名：flags 在 Surface 前。
-            sDisplay = sProjection.createVirtualDisplay(
-                    NAME + "@" + android.os.Process.myUid(),
-                    sW, sH, sDpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
-                    null /* surface 延迟绑 */, null, null);
+            // 2.2.5：PUBLIC 屏——2.2.2 系统报错原文："Requires ADD_MIRROR_DISPLAY,
+            // CAPTURE_VIDEO_OUTPUT ... or an appropriate MediaProjection token"。
+            // 现在持有 token → PUBLIC 合法。PUBLIC 屏无 FLAG_PRIVATE → 其他进程
+            // （引擎 :x）可 launch（真机实锤：PRIVATE 屏即使同 uid/owner 也被
+            // ColorOS 拒："Permission Denial ... with launchDisplayId"）。
+            // token 失效等异常 → 退 OWN_CONTENT_ONLY（v1 窗帘兜底路径）。
+            try {
+                sDisplay = sProjection.createVirtualDisplay(
+                        NAME + "@" + android.os.Process.myUid(),
+                        sW, sH, sDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                        null /* surface 延迟绑 */, null, null);
+                TLog.i(TAG, "virtual display created PUBLIC (projection)");
+            } catch (Throwable tPublic) {
+                TLog.w(TAG, "PUBLIC create failed: " + tPublic + " → OWN_CONTENT_ONLY");
+                sDisplay = sProjection.createVirtualDisplay(
+                        NAME + "@" + android.os.Process.myUid(),
+                        sW, sH, sDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
+                        null, null, null);
+            }
             if (sDisplay == null) {
                 TLog.e(TAG, "createVirtualDisplay null (w=" + sW + " h=" + sH + ")");
                 return -1;
