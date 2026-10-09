@@ -53,12 +53,14 @@ public class FloatingService extends Service {
 
     private WindowManager mWm;
     private View mDrawer;
-    private TextView mHandle;
+    private View mHandle;
     private WindowManager.LayoutParams mDrawerLp;
     private ValueAnimator mSnapAnim;
 
     /** 抽屉容器总宽（把手+面板），measure 后回填 */
     private int mContainerW;
+    /** 2.2.1：面板 VISIBLE 时的容器宽（面板 GONE 后容器只剩球，展开位要用旧值） */
+    private int mOpenContainerW;
     /** 把手宽（贴边态容器留在屏内的部分） */
     private int mHandleW;
     private int mScreenW;
@@ -144,7 +146,7 @@ public class FloatingService extends Service {
 
     private void createDrawer() {
         mDrawer = LayoutInflater.from(this).inflate(R.layout.floating_drawer, null, false);
-        mHandle = (TextView) mDrawer.findViewById(R.id.drawer_handle);
+        mHandle = mDrawer.findViewById(R.id.drawer_handle);
 
         final WindowManager.LayoutParams lp = new WindowManager.LayoutParams();
         mDrawerLp = lp;
@@ -168,8 +170,12 @@ public class FloatingService extends Service {
                 if (w > 0 && handleW > 0 && (w != mContainerW || handleW != mHandleW)) {
                     mContainerW = w;
                     mHandleW = handleW;
+                    View panel = mDrawer.findViewById(R.id.drawer_panel);
+                    if (panel != null && panel.getVisibility() == View.VISIBLE) {
+                        mOpenContainerW = w;   // 2.2.1：记住面板展开时的容器宽
+                    }
                     if (mDrawerLp.x >= mScreenW - 4) {
-                        // 首次：贴边（只露把手）
+                        // 首次：贴边（只露球）
                         mDrawerLp.x = edgeX();
                         applyLayout();
                     }
@@ -193,13 +199,18 @@ public class FloatingService extends Service {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 if (event.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
-                    snapTo(edgeX());
+                    collapsePanel();
                     return true;
                 }
                 return false;
             }
         });
 
+        // 2.2.1：球形态起步（面板 GONE，点击才展开——VMOS 同款）
+        View panel0 = mDrawer.findViewById(R.id.drawer_panel);
+        if (panel0 != null) {
+            panel0.setVisibility(View.GONE);
+        }
         try {
             mWm.addView(mDrawer, lp);
         } catch (Throwable t) {
@@ -207,14 +218,44 @@ public class FloatingService extends Service {
         }
     }
 
-    /** 贴边位：容器只露把手 */
+    /** 贴边位：容器只露球（面板 GONE 态容器宽=球宽） */
     private int edgeX() {
         return mScreenW - mHandleW;
     }
 
-    /** 展开位：面板全露，把手贴着面板左缘 */
+    /** 展开位：面板全露，球贴着面板左缘 */
     private int openX() {
-        return mScreenW - mContainerW;
+        return mScreenW - Math.max(mOpenContainerW, mContainerW);
+    }
+
+    /** 2.2.1：面板展开（点击球）。面板 VISIBLE + 刷新内容 + 滑到展开位。 */
+    private void expandPanel() {
+        View panel = mDrawer.findViewById(R.id.drawer_panel);
+        if (panel != null) {
+            panel.setVisibility(View.VISIBLE);
+        }
+        fillPanel();
+        // 等 measure（容器宽更新 onLayoutChange 记 mOpenContainerW）后再滑
+        mDrawer.post(new Runnable() {
+            @Override
+            public void run() {
+                snapTo(openX());
+            }
+        });
+    }
+
+    /** 2.2.1：面板收起（再点球 / 点外部）。滑回贴边位，动画后 GONE。 */
+    private void collapsePanel() {
+        snapTo(edgeX());
+        mDrawer.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                View panel = mDrawer.findViewById(R.id.drawer_panel);
+                if (panel != null && !mGuestOpen && !mWinDrag) {
+                    panel.setVisibility(View.GONE);
+                }
+            }
+        }, 240);
     }
 
     private boolean handleTouch(MotionEvent event) {
@@ -239,21 +280,14 @@ public class FloatingService extends Service {
                 if (!mDragging) {
                     return true;
                 }
-                // TwinBox 2.1.72：有容器应用在跑 → 拖动=全屏窗户；
-                // 没有运行中的应用 → 老行为（拖动=拉出面板）。
-                // 2.1.74（DeepSeek）：缓存可能陈旧（guest 刚被杀），必须同时有
-                // 有效 taskId 才走窗户；否则照旧拉面板。
+                // TwinBox 2.2.1（VMOS 式）：球在右半屏 + 有容器应用在跑 → 拖动=拉窗户；
+                // 其余情况（球在左半屏/无应用）→ 拖动=自由移动球（松手贴边）。
                 boolean hasGuest = mPullTaskId >= 0
                         && mRunCache != null && !mRunCache.isEmpty();
-                if (hasGuest) {
+                boolean rightSide = mStartX > mScreenW / 2;
+                if (hasGuest && rightSide) {
                     if (!mWinDrag) {
-                        mWinPullOut = mStartX > mScreenW / 2;
-                        // 拖回但应用已不在前台（用户按过 Home）→ 按拖出处理。
-                        // v2 例外：guest 在虚拟屏上，主屏 isGuestFront 恒 false，
-                        // 但 mGuestOpen（球贴左缘）就是"开着"——不能误判成拖出。
-                        if (!mWinPullOut && !mGuestOpen && !isGuestFront()) {
-                            mWinPullOut = true;
-                        }
+                        mWinPullOut = true;
                         beginWinDrag();
                     }
                     // 横向：球（=窗户边缘）跟手，范围 [0, edgeX]
@@ -264,16 +298,19 @@ public class FloatingService extends Service {
                     if (mV2Ready && mWinV2On) {
                         setWinV2Width(mScreenW - nx);
                     } else {
-                        setCurtainPos(mWinPullOut ? nx : nx - mScreenW);
+                        setCurtainPos(nx);
                     }
+                    // 球拖动反馈（VMOS：拖动中半透明）
+                    mDrawer.setAlpha(0.55f);
                     return true;
                 }
-                // 纵向：整抽屉挪位（clamp 屏内）
-                // 横向：贴边位 ↔ 展开位之间跟手（clamp）
-                int minX = openX();
-                int maxX = edgeX();
+                // 球自由移动（VMOS 同款）：先收面板（GONE），再跟手
+                View panel = mDrawer.findViewById(R.id.drawer_panel);
+                if (panel != null && panel.getVisibility() == View.VISIBLE) {
+                    panel.setVisibility(View.GONE);
+                }
                 int px = (int) (mStartX + dx);
-                mDrawerLp.x = Math.max(minX, Math.min(maxX, px));
+                mDrawerLp.x = Math.max(0, Math.min(edgeX(), px));
                 int handleH = Math.max(1, mHandle.getHeight());
                 int ny = (int) (mStartY + dy);
                 mDrawerLp.y = Math.max(0, Math.min(mScreenH - handleH, ny));
@@ -293,19 +330,25 @@ public class FloatingService extends Service {
                     }
                     return true;
                 }
+                mDrawer.setAlpha(1f);
                 if (!moved) {
                     if (mGuestOpen) {
-                        // 全开态点把手：收回应用（一步到位，最顺手）
+                        // 全开态点球：收回应用（一步到位，最顺手）
                         winClose();
                         return true;
                     }
-                    // 点按 toggle：贴边 ↔ 展开
-                    boolean open = mDrawerLp.x < (edgeX() + openX()) / 2;
-                    snapTo(open ? edgeX() : openX());
+                    // 点按球 = 菜单（VMOS 同款）：面板展开 ↔ 收起
+                    View panel = mDrawer.findViewById(R.id.drawer_panel);
+                    boolean showing = panel != null && panel.getVisibility() == View.VISIBLE
+                            && mDrawerLp.x < (edgeX() + openX()) / 2;
+                    if (showing) {
+                        collapsePanel();
+                    } else {
+                        expandPanel();
+                    }
                 } else {
-                    // 松手吸附：拉出过半 → 展开；否则贴边
-                    int mid = (edgeX() + openX()) / 2;
-                    snapTo(mDrawerLp.x < mid ? openX() : edgeX());
+                    // 球拖动松手：就近贴边（VMOS 同款）
+                    snapTo(mDrawerLp.x < mScreenW / 2 ? 0 : edgeX());
                 }
                 mDragging = false;
                 return true;
@@ -320,9 +363,8 @@ public class FloatingService extends Service {
                     }
                     return true;
                 }
-                // 取消时按当前位姿就近吸附
-                int mid = (edgeX() + openX()) / 2;
-                snapTo(mDrawerLp.x < mid ? openX() : edgeX());
+                // 取消时球就近贴边
+                snapTo(mDrawerLp.x < mScreenW / 2 ? 0 : edgeX());
                 mDragging = false;
                 return true;
             default:
@@ -381,21 +423,100 @@ public class FloatingService extends Service {
                 return false;
             }
             if (!mV2Ready) {
-                int res = VBox.launchToDisplay(this, mPullPkg, 0, did);
-                if (res != 0) {
-                    TLog.w("Float", "v2: launchToDisplay res=" + res + " → fallback v1");
-                    return false;
-                }
                 buildWinV2();
-                verifyV2Async(did);
+                // 验证位：240px（1px 时 Surface 过小，验证环境不真实）
+                setWinV2Width(240);
+                migrateAndLaunch(did);
+            } else {
+                setWinV2Width(mScreenW - mDrawerLp.x);
             }
-            // 展开浮窗（从 0 宽开始，MOVE 会喂宽度）
-            setWinV2Width(0);
             return true;
         } catch (Throwable t) {
             TLog.e("Float", "startWindowV2 fail", t);
             return false;
         }
+    }
+
+    /**
+     * 2.2.1：v2 冷迁移 + 启动（后台线程）。
+     * 真机日志实锤：AMS 对已存在的 task 忽略 launchDisplayId（Task 始终
+     * d=0）。guest 已在主屏跑时必须先 finishAndRemoveTask（同 uid appTask
+     * 可 finish 自己的），再冷 launchToDisplay——新 task born on display N。
+     * 代价：activity 重建（抖音回首页）。v2 语义边界，先保画面通路。
+     */
+    private void migrateAndLaunch(final int displayId) {
+        final String pkg = mPullPkg;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    boolean killed = false;
+                    try {
+                        android.app.ActivityManager am =
+                                (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                        for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
+                            android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
+                            if (ri != null && ri.taskId == mPullTaskId) {
+                                t.finishAndRemoveTask();
+                                killed = true;
+                                break;
+                            }
+                        }
+                    } catch (Throwable tk) {
+                        TLog.w("Float", "v2 migrate finish fail: " + tk);
+                    }
+                    if (killed) {
+                        TLog.i("Float", "v2: main-screen task " + mPullTaskId
+                                + " finished → cold relaunch on display " + displayId);
+                        android.os.SystemClock.sleep(300);
+                    }
+                    int res = VBox.launchToDisplay(FloatingService.this, pkg, 0, displayId);
+                    if (res != 0) {
+                        TLog.w("Float", "v2: launchToDisplay res=" + res);
+                    }
+                    verifyV2Async(displayId);
+                } catch (Throwable t) {
+                    TLog.e("Float", "migrateAndLaunch fail", t);
+                }
+            }
+        }, "tb-v2-mig").start();
+    }
+
+    /**
+     * 2.2.1：启动区点按 = 直接进窗户（VMOS 语义：应用活在虚拟屏）。
+     * 冷启动到虚拟屏 + 浮窗全开 + 验证；失败自动降级普通全屏启动。
+     */
+    public void launchInWindow(final String pkg) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    int did = VirtualScreen.ensure(FloatingService.this);
+                    if (did < 0) {
+                        VBox.launch(FloatingService.this, pkg, 0);
+                        return;
+                    }
+                    int res = VBox.launchToDisplay(FloatingService.this, pkg, 0, did);
+                    if (res != 0) {
+                        VBox.launch(FloatingService.this, pkg, 0);
+                        return;
+                    }
+                    new android.os.Handler(android.os.Looper.getMainLooper())
+                            .post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    mGuestOpen = true;
+                                    buildWinV2();
+                                    animWinV2Width(mScreenW);
+                                    ballAnimTo(0);
+                                    verifyV2Async(did);
+                                }
+                            });
+                } catch (Throwable t) {
+                    TLog.e("Float", "launchInWindow fail", t);
+                }
+            }
+        }, "tb-v2-liw").start();
     }
 
     /** 建浮窗：TYPE_APPLICATION_OVERLAY，右缘贴边，TextureView 铺满。 */
@@ -604,8 +725,20 @@ public class FloatingService extends Service {
                     } catch (Throwable ignore) {
                     }
                     if (alive) {
-                        am.moveTaskToFront(taskId, android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
-                        TLog.i("Float", "win: moveTaskToFront " + taskId);
+                        try {
+                            am.moveTaskToFront(taskId, android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
+                            TLog.i("Float", "win: moveTaskToFront " + taskId);
+                        } catch (Throwable tMove) {
+                            // 2.2.1：ColorOS 对 stub task 的 moveTaskToFront 直接
+                            // 抛 NPE（真机日志实锤）——不能让它炸掉整个恢复线程，
+                            // 下面确认循环 + relaunch 兜底会接着处理。
+                            TLog.w("Float", "moveTaskToFront failed (ColorOS?): "
+                                    + tMove + " → fallback launch");
+                            if (pkg != null && pkg.length() > 0) {
+                                VBox.launch(FloatingService.this, pkg, 0);
+                                return;
+                            }
+                        }
                     } else if (pkg != null && pkg.length() > 0) {
                         TLog.w("Float", "win: task " + taskId + " gone → relaunch " + pkg);
                         VBox.launch(FloatingService.this, pkg, 0);
@@ -730,7 +863,6 @@ public class FloatingService extends Service {
     /** 窗户全开：v2=浮窗铺满（主屏 task 不动）；v1=应用真全屏+球贴左缘。 */
     private void winOpen() {
         mGuestOpen = true;
-        mHandle.setText("›");
         if (mV2Ready && mWinV2On) {
             // v2：浮窗一步铺满（可加动画），底下界面原样
             animWinV2Width(mScreenW);
@@ -794,7 +926,6 @@ public class FloatingService extends Service {
         }
         TLog.w("Float", "win abort: " + why);
         mGuestOpen = false;
-        mHandle.setText("‹");
         if (mV2Ready) {
             destroyWinV2();
         }
@@ -811,15 +942,11 @@ public class FloatingService extends Service {
      *  v1=应用送后台（恢复窗户底下的 task）。 */
     private void winClose() {
         mGuestOpen = false;
-        mHandle.setText("‹");
         if (mV2Ready && mWinV2On) {
             // v2：浮窗收到右缘（宽度→1 挂屏外），guest 继续在虚拟屏跑
             animWinV2Width(1);
             ballAnimTo(edgeX());
-            View panel = mDrawer.findViewById(R.id.drawer_panel);
-            if (panel != null) {
-                panel.setVisibility(View.VISIBLE);
-            }
+            // 2.2.1：面板保持 GONE（关窗后菜单收着，点球再开——VMOS 同款）
             TLog.i("Float", "v2: window closed, guest stays on virtual display");
             return;
         }
@@ -828,11 +955,7 @@ public class FloatingService extends Service {
         restoreBeneath();
         ballAnimTo(edgeX());
         dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
-        // 面板恢复（下次拖动/点按可用）
-        View panel = mDrawer.findViewById(R.id.drawer_panel);
-        if (panel != null) {
-            panel.setVisibility(View.VISIBLE);
-        }
+        // 2.2.1：面板保持 GONE（点球再开菜单）
     }
 
     /**
@@ -999,7 +1122,6 @@ public class FloatingService extends Service {
         });
         mSnapAnim.start();
         // 箭头：展开态 ›（向右推回）；贴边态 ‹（向左拉出）
-        mHandle.setText(opening ? "›" : "‹");
     }
 
     private void cancelSnap() {
@@ -1071,7 +1193,8 @@ public class FloatingService extends Service {
                 item.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        VBox.launch(FloatingService.this, pkg0, 0);
+                        // 2.2.1：启动即进窗户（虚拟屏），失败自动降级全屏
+                        launchInWindow(pkg0);
                         snapTo(edgeX());
                     }
                 });
@@ -1111,7 +1234,8 @@ public class FloatingService extends Service {
             item.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    VBox.launch(FloatingService.this, e.packageName, e.userId);
+                    // 2.2.1：启动即进窗户（虚拟屏），失败自动降级全屏
+                    launchInWindow(e.packageName);
                     snapTo(edgeX());
                 }
             });

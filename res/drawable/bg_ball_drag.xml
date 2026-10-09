@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- TwinBox 2.2.1：VMOS 式悬浮球（圆形，深色半透明，微光描边） -->
+<!-- 拖动中的球（更透明，VMOS 同款反馈） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="#E61B2033" />
+    <solid android:color="#801B2033" />
     <stroke android:width="1.5dp" android:color="#405B8CFF" />
 </shape>

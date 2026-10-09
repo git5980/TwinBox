@@ -1,25 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  TwinBox 2.1.63：VMOS 式抽屉容器（把手 + 侧面板一体化）。
-  布局：[把手竖条][面板]。贴边态容器整体停在屏外，只露把手；
-  拖把手把面板从右缘拉出来，反向推回去（FloatingService 手势驱动）。
+  TwinBox 2.2.1：VMOS 式悬浮球（圆球 + 侧面板）。
+  布局：[圆球][面板]。球可自由拖动（贴边吸附），点击=菜单；
+  贴右缘时向左拖=拉出窗户（虚拟屏浮窗/窗帘），VMOS 同款交互。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="horizontal">
 
-    <!-- 把手：竖条 + 箭头（‹ 贴边待拉出 / › 展开待推回，代码按态切换） -->
-    <TextView
+    <!-- TwinBox 2.2.1：VMOS 式悬浮球（圆形，自由拖动+贴边吸附，点击=菜单） -->
+    <FrameLayout
         android:id="@+id/drawer_handle"
-        android:layout_width="34dp"
-        android:layout_height="120dp"
-        android:background="@drawable/bg_handle"
-        android:gravity="center"
-        android:text="‹"
-        android:textColor="@color/md_primary"
-        android:textSize="22sp"
-        android:contentDescription="@string/drawer_handle_desc" />
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        android:contentDescription="@string/drawer_handle_desc">
+
+        <TextView
+            android:id="@+id/ball_face"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_ball"
+            android:gravity="center"
+            android:text="◫"
+            android:textColor="#FF8FA8E8"
+            android:textSize="24sp" />
+    </FrameLayout>
 
     <!-- 侧面板：沿用 floating_panel 的结构与 ID（panel_items） -->
     <LinearLayout
