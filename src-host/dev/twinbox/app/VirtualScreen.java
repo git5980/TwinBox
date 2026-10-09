@@ -49,6 +49,10 @@ public final class VirtualScreen {
     /**
      * 创建（或复用）虚拟屏。分辨率 = 物理屏真实像素（1:1，触摸坐标零变换）。
      * Surface 可以稍后绑（TextureView available 回调时 setSurface）。
+     * 2.2.2：PUBLIC 屏——OWN_CONTENT_ONLY 是 private 屏，ColorOS 拒绝
+     * 其他进程（引擎 :x）launch 到它（真机日志实锤 SecurityException:
+     * "Permission Denial ... with launchDisplayId=8"）。PUBLIC 是 Cast/
+     * 双屏应用的公开机制，允许三方 launch。
      *
      * @return displayId；-1 = 失败（displayManager 不给建，几乎不可能）
      */
@@ -72,7 +76,7 @@ public final class VirtualScreen {
             sDisplay = dm.createVirtualDisplay(
                     NAME + "@" + android.os.Process.myUid(),
                     sW, sH, sDpi, null /* surface 延迟绑 */,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC);
             if (sDisplay == null) {
                 TLog.e(TAG, "createVirtualDisplay null (w=" + sW + " h=" + sH + ")");
                 return -1;
