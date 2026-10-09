@@ -21,6 +21,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -87,6 +88,10 @@ public class FloatingService extends Service {
     private List<com.lody.virtual.remote.AppTaskInfo> mRunCache;
     /** 包名 → 应用名缓存（fillPanel 维护，refreshRunCache 取 label 用） */
     private final java.util.Map<String, String> mLabelByPkg = new java.util.HashMap<String, String>();
+    /** 运行列表缓存时间戳（refreshRunCache 节流用，2.1.74 合并自 DeepSeek） */
+    private long mRunCacheAt;
+    /** 连续手势内刷新运行列表的最小间隔（ms）——避免主线程反复打引擎 IPC */
+    private static final long RUN_CACHE_TTL_MS = 600L;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -166,8 +171,9 @@ public class FloatingService extends Service {
         });
 
         fillPanel();
-        // TwinBox 2.1.72：启动即预取窗户目标（不依赖用户先开面板）
-        refreshRunCache();
+        // TwinBox 2.1.72：启动即预取窗户目标（不依赖用户先开过面板）。
+        // fillPanel 里已经 force 刷新过一次，这里只是保险，直接沿用缓存。
+        refreshRunCache(false);
 
         mHandle.setOnTouchListener(new View.OnTouchListener() {
             @Override
@@ -208,8 +214,8 @@ public class FloatingService extends Service {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 cancelSnap();
-                // 手势开始即刷新运行列表（数据新鲜，不依赖用户先开过面板）
-                refreshRunCache();
+                // 手势开始即刷新运行列表（2.1.74：带节流，连续手势不打爆引擎 IPC）
+                refreshRunCache(false);
                 mDownX = event.getRawX();
                 mDownY = event.getRawY();
                 mStartX = mDrawerLp.x;
@@ -228,7 +234,10 @@ public class FloatingService extends Service {
                 }
                 // TwinBox 2.1.72：有容器应用在跑 → 拖动=全屏窗户；
                 // 没有运行中的应用 → 老行为（拖动=拉出面板）。
-                boolean hasGuest = mRunCache != null && !mRunCache.isEmpty();
+                // 2.1.74（DeepSeek）：缓存可能陈旧（guest 刚被杀），必须同时有
+                // 有效 taskId 才走窗户；否则照旧拉面板。
+                boolean hasGuest = mPullTaskId >= 0
+                        && mRunCache != null && !mRunCache.isEmpty();
                 if (hasGuest) {
                     if (!mWinDrag) {
                         mWinPullOut = mStartX > mScreenW / 2;
@@ -333,6 +342,9 @@ public class FloatingService extends Service {
      * getRunningTasks 只能看到自己 uid 的 task（guest 以宿主 stub 名义注册，
      * 同 uid 可见）——拿得到宿主自己的；拿不到（别的 app/桌面）返回 -1，
      * 收回时走 HOME 兜底。
+     * 2.1.74（DeepSeek 知识）：guest 的 stub task 也是 dev.twinbox.app 包名
+     * （StubActivity 跑在宿主进程）——按包名过滤会撞名，但这里按 taskId 恢复
+     * 天然免疫：窗户底下是另一个 guest 就恢复那个 guest（用户当时看的界面）。
      */
     private int captureBeneathTask() {
         try {
@@ -506,6 +518,50 @@ public class FloatingService extends Service {
         mHandle.setText("›");
         ballAnimTo(0);
         dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
+        // 2.1.74（DeepSeek 合并）：全开前验证 guest 真到前台了。bringGuestRobust
+        // 拉出时就开跑（含 2.4s 确认循环），这里只兜最坏情况：验证失败再增援一次，
+        // 仍失败 → abort（球回右缘、面板恢复、窗帘撤掉）——绝不出现
+        // 「球贴左缘+窗帘全开+底下没应用」的死态。
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.os.SystemClock.sleep(300);
+                    if (isGuestFront()) {
+                        return;
+                    }
+                    bringGuestRobust();   // 增援（内部有验活/重启/确认循环）
+                    android.os.SystemClock.sleep(1200);
+                    if (!isGuestFront()) {
+                        new android.os.Handler(android.os.Looper.getMainLooper())
+                                .post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        abortWinDrag("guest not front after retry");
+                                    }
+                                });
+                    }
+                } catch (Throwable ignore) {
+                }
+            }
+        }, "tb-win-verify").start();
+    }
+
+    /** 窗户异常中止：球回右缘、面板恢复、窗帘撤掉（验证失败/超时）。 */
+    private void abortWinDrag(String why) {
+        if (!mGuestOpen) {
+            return;
+        }
+        TLog.w("Float", "win abort: " + why);
+        mGuestOpen = false;
+        mHandle.setText("‹");
+        // 窗户底下还是原界面（guest 没上来过），直接撤
+        ballAnimTo(edgeX());
+        safeRemoveCurtain();
+        View panel = mDrawer.findViewById(R.id.drawer_panel);
+        if (panel != null) {
+            panel.setVisibility(View.VISIBLE);
+        }
     }
 
     /** 窗户收回：应用送后台，球回贴边。 */
@@ -569,11 +625,22 @@ public class FloatingService extends Service {
         }, "tb-win-close").start();
     }
 
-    /** 窗户目标预取/刷新（DOWN 时调一次保证数据新鲜，label 用面板缓存）。 */
-    private void refreshRunCache() {
+    /**
+     * 窗户目标预取/刷新（2.1.74 合并自 DeepSeek：带节流）。
+     * 返回本次拿到的运行列表，调用方直接复用，不要再自己调 VBox.runningTasks()
+     * ——那会多打一次引擎 IPC。
+     *
+     * @param force true=强制刷新；false=按节流间隔（连续拖动手势不打爆引擎）
+     */
+    private List<com.lody.virtual.remote.AppTaskInfo> refreshRunCache(boolean force) {
+        List<com.lody.virtual.remote.AppTaskInfo> r = mRunCache;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (!force && r != null && now - mRunCacheAt < RUN_CACHE_TTL_MS) {
+            return r;   // 节流命中：沿用上次结果
+        }
         try {
-            List<com.lody.virtual.remote.AppTaskInfo> r = VBox.runningTasks();
-            mRunCache = r;
+            r = VBox.runningTasks();
+            mRunCacheAt = now;
             if (!r.isEmpty()) {
                 // 当前目标还在列表里就不换（窗户目标稳定）
                 boolean keep = false;
@@ -599,6 +666,10 @@ public class FloatingService extends Service {
         } catch (Throwable t) {
             TLog.w("Float", "refreshRunCache fail: " + t);
         }
+        if (r == null) {
+            r = new ArrayList<com.lody.virtual.remote.AppTaskInfo>();
+        }
+        return r;
     }
 
     /** 球位动画（不触发 fillPanel）。 */
@@ -707,8 +778,7 @@ public class FloatingService extends Service {
         // ---- TwinBox 2.1.72：运行中区 + 窗户目标缓存 ----
         // running 列表进 mRunCache（拖把手拉窗户的目标）；
         // 列表里点按 = 全屏打开该应用（用户要的是全屏，不是小窗）。
-        List<com.lody.virtual.remote.AppTaskInfo> running = VBox.runningTasks();
-        refreshRunCache();
+        List<com.lody.virtual.remote.AppTaskInfo> running = refreshRunCache(true);
         if (!running.isEmpty()) {
             TextView head = new TextView(this);
             head.setText("运行中 · 点按打开 · 拖把手拉出");
