@@ -641,6 +641,7 @@ public class FloatingService extends Service {
         try {
             r = VBox.runningTasks();
             mRunCacheAt = now;
+            mRunCache = r;   // 2.1.75：合并时漏了这行——mRunCache 恒 null → hasGuest 恒 false → 窗户永不触发
             if (!r.isEmpty()) {
                 // 当前目标还在列表里就不换（窗户目标稳定）
                 boolean keep = false;
