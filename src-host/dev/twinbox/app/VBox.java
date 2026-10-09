@@ -426,6 +426,34 @@ public class VBox {
         return i;
     }
 
+    /**
+     * TwinBox 2.2.0：把 guest 启动到指定 display（VMOS 式窗户的显示链路）。
+     * 引擎两条路径 options 均直通系统层（InNewTask=宿主 context.startActivity
+     * 带 options；FromSourceTask=hook 后的 AMS startActivity args 注入），
+     * setLaunchDisplayId 在 options 里对两条路都生效。
+     *
+     * @return 0 = START_SUCCESS；其他 = 失败码
+     */
+    public static int launchToDisplay(Context ctx, String packageName, int userId, int displayId) {
+        try {
+            Intent i = buildLaunchIntent(ctx, packageName, userId);
+            if (i == null) {
+                TLog.w("VBox", "launchToDisplay: no entry for " + packageName);
+                return -1;
+            }
+            android.app.ActivityOptions opts = android.app.ActivityOptions.makeBasic();
+            VirtualScreen.withDisplay(opts, displayId);
+            int res = com.lody.virtual.client.ipc.VActivityManager.get()
+                    .startActivity(i, null, null, opts.toBundle(), null, 0, userId);
+            TLog.i("VBox", "launchToDisplay " + packageName + " display=" + displayId
+                    + " res=" + res + " (0=OK)");
+            return res;
+        } catch (Throwable t) {
+            TLog.e("VBox", "launchToDisplay fail", t);
+            return -2;
+        }
+    }
+
     /** 小窗默认边界：56% 宽 × 74% 高，水平居中，顶部留 10%。 */
     private static android.graphics.Rect freeformBounds(Context ctx) {
         try {

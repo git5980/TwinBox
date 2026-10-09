@@ -93,6 +93,13 @@ public class FloatingService extends Service {
     /** 连续手势内刷新运行列表的最小间隔（ms）——避免主线程反复打引擎 IPC */
     private static final long RUN_CACHE_TTL_MS = 600L;
 
+    // ------------- TwinBox 2.2.0：窗户 v2（VMOS 架构：虚拟屏 + TextureView 悬浮窗） -------------
+    private android.widget.FrameLayout mWinV2;        // 全屏浮窗容器（右缘贴边，宽度=拉开量）
+    private android.view.TextureView mWinTexture;      // guest 画面（虚拟屏 Surface）
+    private WindowManager.LayoutParams mWinV2Lp;
+    private boolean mWinV2On;
+    private boolean mV2Ready;                          // 虚拟屏+guest 已就位（v2 生效中）
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
@@ -241,8 +248,10 @@ public class FloatingService extends Service {
                 if (hasGuest) {
                     if (!mWinDrag) {
                         mWinPullOut = mStartX > mScreenW / 2;
-                        // 拖回但应用已不在前台（用户按过 Home）→ 按拖出处理
-                        if (!mWinPullOut && !isGuestFront()) {
+                        // 拖回但应用已不在前台（用户按过 Home）→ 按拖出处理。
+                        // v2 例外：guest 在虚拟屏上，主屏 isGuestFront 恒 false，
+                        // 但 mGuestOpen（球贴左缘）就是"开着"——不能误判成拖出。
+                        if (!mWinPullOut && !mGuestOpen && !isGuestFront()) {
                             mWinPullOut = true;
                         }
                         beginWinDrag();
@@ -251,8 +260,12 @@ public class FloatingService extends Service {
                     int nx = (int) Math.max(0, Math.min(mScreenW - 8, mStartX + dx));
                     mDrawerLp.x = nx;
                     applyLayout();
-                    // 窗帘跟手：拖出盖球右侧 [x, W]；拖回盖球左侧 [0, x]
-                    setCurtainPos(mWinPullOut ? nx : nx - mScreenW);
+                    // v2：浮窗展开量跟手（右对齐）；v1：窗帘跟手
+                    if (mV2Ready && mWinV2On) {
+                        setWinV2Width(mScreenW - nx);
+                    } else {
+                        setCurtainPos(mWinPullOut ? nx : nx - mScreenW);
+                    }
                     return true;
                 }
                 // 纵向：整抽屉挪位（clamp 屏内）
@@ -319,7 +332,7 @@ public class FloatingService extends Service {
 
     // ---------------------------------------------------------------- 全屏窗户
 
-    /** 窗户拖动开始：面板收起（容器只剩把手）、窗帘上幕、应用瞬时全屏。 */
+    /** 窗户拖动开始：v2（虚拟屏浮窗）优先，v1（窗帘+task切换）兜底。 */
     private void beginWinDrag() {
         mWinDrag = true;
         // 面板收起：窗户模式容器只剩把手（面板 GONE），不挡底下的真应用
@@ -327,14 +340,216 @@ public class FloatingService extends Service {
         if (panel != null) {
             panel.setVisibility(View.GONE);
         }
-        // 窗帘（全屏深色半透明，translationX 跟手）
-        showCurtain();
-        // 拖出：把真应用瞬时调到前台（窗帘底下），全程 live 内容
-        if (mWinPullOut && mPullTaskId >= 0) {
-            // 2.1.73：先记住窗户底下的 task（收回时恢复它，绝不拉宿主主界面）
-            mBeneathTaskId = captureBeneathTask();
-            bringGuestRobust();
+        // 把手置顶（浮窗后 add 会盖住它，拖动就断了）
+        try {
+            mWm.removeView(mDrawer);
+            mWm.addView(mDrawer, mDrawerLp);
+        } catch (Throwable ignore) {
         }
+        if (mWinPullOut) {
+            // 拉出：v2 先试（虚拟屏 + TextureView 浮窗）
+            if (!startWindowV2()) {
+                // 降级 v1：记住窗户底下的 task + robust 拉真 task 到前台
+                mBeneathTaskId = captureBeneathTask();
+                bringGuestRobust();
+                showCurtain();
+            } else {
+                // v2 起飞：先窗帘垫场（TextureView 出帧前是透明的），
+                // 出帧后 verifyV2Async 会撤窗帘、浮窗亮起
+                showCurtain();
+            }
+        } else {
+            // 拖回：v1 才需要窗帘（v2 底下本来就是原界面）
+            if (!mV2Ready) {
+                showCurtain();
+            }
+        }
+    }
+
+    /**
+     * TwinBox 2.2.0：窗户 v2 启动（VMOS 架构复用）。
+     * 虚拟屏 + guest launch 到虚拟屏 + TextureView 全屏浮窗（贴右缘，宽度=拉开量）。
+     * 首帧到达（getTimestamp 变化）前浮窗透明 → 窗帘垫场；到达后 v2 接管。
+     */
+    private boolean startWindowV2() {
+        try {
+            if (mPullPkg == null || mPullPkg.length() == 0) {
+                return false;
+            }
+            int did = VirtualScreen.ensure(this);
+            if (did < 0) {
+                return false;
+            }
+            if (!mV2Ready) {
+                int res = VBox.launchToDisplay(this, mPullPkg, 0, did);
+                if (res != 0) {
+                    TLog.w("Float", "v2: launchToDisplay res=" + res + " → fallback v1");
+                    return false;
+                }
+                buildWinV2();
+                verifyV2Async(did);
+            }
+            // 展开浮窗（从 0 宽开始，MOVE 会喂宽度）
+            setWinV2Width(0);
+            return true;
+        } catch (Throwable t) {
+            TLog.e("Float", "startWindowV2 fail", t);
+            return false;
+        }
+    }
+
+    /** 建浮窗：TYPE_APPLICATION_OVERLAY，右缘贴边，TextureView 铺满。 */
+    private void buildWinV2() {
+        if (mWinV2 != null) {
+            return;
+        }
+        mWinV2 = new android.widget.FrameLayout(this);
+        mWinV2.setBackgroundColor(0xFF06080D);
+        mWinTexture = new android.view.TextureView(this);
+        // 2.2.0：触摸直派通道（AIDL）下一版接入；本版点击给明确提示，
+        // 收回/拖动/全开已可用。把手在浮窗之上（beginWinDrag 置顶）。
+        mWinTexture.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Toast.makeText(FloatingService.this,
+                        "浮窗模式：拖把手收回窗户。直接操作画面将在下版支持",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
+        mWinTexture.setClickable(true);
+        mWinV2.addView(mWinTexture, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+        mWinTexture.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int h) {
+                VirtualScreen.bindSurface(mWinTexture);
+                TLog.i("Float", "v2: texture available " + w + "x" + h);
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int h) {
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) {
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {
+            }
+        });
+        mWinV2Lp = new WindowManager.LayoutParams(
+                1, mScreenH,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.OPAQUE);
+        mWinV2Lp.gravity = Gravity.TOP | Gravity.START;
+        mWinV2Lp.x = 0;
+        mWinV2Lp.y = 0;
+        try {
+            mWm.addView(mWinV2, mWinV2Lp);
+            mWinV2On = true;
+        } catch (Throwable t) {
+            TLog.e("Float", "v2 addView fail", t);
+            mWinV2 = null;
+        }
+    }
+
+    /** v2 浮窗宽度（=窗户拉开量，右对齐展开）。 */
+    private void setWinV2Width(int width) {
+        if (!mWinV2On || mWinV2Lp == null) {
+            return;
+        }
+        int w = Math.max(1, Math.min(mScreenW, width));
+        if (mWinV2Lp.width == w && mWinV2Lp.x == mScreenW - w) {
+            return;
+        }
+        mWinV2Lp.width = w;
+        mWinV2Lp.x = mScreenW - w;   // 右对齐
+        try {
+            mWm.updateViewLayout(mWinV2, mWinV2Lp);
+        } catch (Throwable t) {
+            TLog.w("Float", "setWinV2Width fail: " + t);
+        }
+    }
+
+    /**
+     * 首帧验证：3.5s 内 TextureView 有内容（SurfaceTexture timestamp 前进）
+     * → v2 生效（撤窗帘，浮窗接管）；无帧 → v2 死（launch 没到虚拟屏 /
+     * OEM 拒 setLaunchDisplayId）→ 撤浮窗，降级 v1（窗帘 + task 切换）。
+     */
+    private void verifyV2Async(final int displayId) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final long t0 = textureTimestamp();
+                    long t = t0;
+                    for (int i = 0; i < 35; i++) {
+                        android.os.SystemClock.sleep(100);
+                        t = textureTimestamp();
+                        if (t > t0 && t > 0) {
+                            break;
+                        }
+                    }
+                    final boolean live = t > 0 && t > t0;
+                    TLog.i("Float", "v2 verify: display=" + displayId
+                            + " t0=" + t0 + " t=" + t + " live=" + live);
+                    new android.os.Handler(android.os.Looper.getMainLooper())
+                            .post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (live) {
+                                        mV2Ready = true;
+                                        // 窗帘功成身退：v2 画面接管
+                                        safeRemoveCurtain();
+                                        setWinV2Width(mScreenW - mDrawerLp.x);
+                                        Toast.makeText(FloatingService.this,
+                                                "已进入浮窗模式（画面来自虚拟屏）",
+                                                Toast.LENGTH_SHORT).show();
+                                    } else {
+                                        destroyWinV2();
+                                        // v1 接管：窗帘在，task 拉前
+                                        mBeneathTaskId = captureBeneathTask();
+                                        bringGuestRobust();
+                                    }
+                                }
+                            });
+                } catch (Throwable t) {
+                    TLog.w("Float", "verifyV2 fail: " + t);
+                }
+            }
+        }, "tb-v2-verify").start();
+    }
+
+    private long textureTimestamp() {
+        try {
+            if (mWinTexture != null && mWinTexture.getSurfaceTexture() != null) {
+                return mWinTexture.getSurfaceTexture().getTimestamp();
+            }
+        } catch (Throwable ignore) {
+        }
+        return 0;
+    }
+
+    /** v2 撤收（验证失败 / 用户关窗户功能）。guest task 已发去虚拟屏，
+     *  验证失败说明它没上去（还在主屏 task 或死了），v1 的 bringGuestRobust 会拉它。 */
+    private void destroyWinV2() {
+        if (mWinV2On && mWinV2 != null) {
+            try {
+                mWm.removeView(mWinV2);
+            } catch (Throwable ignore) {
+            }
+        }
+        mWinV2 = null;
+        mWinTexture = null;
+        mWinV2On = false;
+        mV2Ready = false;
+        TLog.i("Float", "v2 destroyed (fallback or close)");
     }
 
     /**
@@ -512,10 +727,16 @@ public class FloatingService extends Service {
         mCurtainOn = false;
     }
 
-    /** 窗户全开：应用继续全屏，球吸附左缘，窗帘滑出界（方向=拖动来向）。 */
+    /** 窗户全开：v2=浮窗铺满（主屏 task 不动）；v1=应用真全屏+球贴左缘。 */
     private void winOpen() {
         mGuestOpen = true;
         mHandle.setText("›");
+        if (mV2Ready && mWinV2On) {
+            // v2：浮窗一步铺满（可加动画），底下界面原样
+            animWinV2Width(mScreenW);
+            ballAnimTo(0);
+            return;
+        }
         ballAnimTo(0);
         dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
         // 2.1.74（DeepSeek 合并）：全开前验证 guest 真到前台了。bringGuestRobust
@@ -547,7 +768,26 @@ public class FloatingService extends Service {
         }, "tb-win-verify").start();
     }
 
-    /** 窗户异常中止：球回右缘、面板恢复、窗帘撤掉（验证失败/超时）。 */
+    /** v2 浮窗宽度动画（收/展开）。 */
+    private void animWinV2Width(final int targetW) {
+        if (!mWinV2On || mWinV2Lp == null) {
+            return;
+        }
+        cancelSnap();
+        final int from = mWinV2Lp.width;
+        mSnapAnim = ValueAnimator.ofInt(from, targetW);
+        mSnapAnim.setDuration(240);
+        mSnapAnim.setInterpolator(new DecelerateInterpolator());
+        mSnapAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                setWinV2Width((Integer) animation.getAnimatedValue());
+            }
+        });
+        mSnapAnim.start();
+    }
+
+    /** 窗户异常中止：v2=撤浮窗；球回右缘、面板恢复、窗帘撤掉。 */
     private void abortWinDrag(String why) {
         if (!mGuestOpen) {
             return;
@@ -555,6 +795,9 @@ public class FloatingService extends Service {
         TLog.w("Float", "win abort: " + why);
         mGuestOpen = false;
         mHandle.setText("‹");
+        if (mV2Ready) {
+            destroyWinV2();
+        }
         // 窗户底下还是原界面（guest 没上来过），直接撤
         ballAnimTo(edgeX());
         safeRemoveCurtain();
@@ -564,10 +807,22 @@ public class FloatingService extends Service {
         }
     }
 
-    /** 窗户收回：应用送后台，球回贴边。 */
+    /** 窗户收回：v2=浮窗收起（guest 留虚拟屏跑，底下界面原样不动）；
+     *  v1=应用送后台（恢复窗户底下的 task）。 */
     private void winClose() {
         mGuestOpen = false;
         mHandle.setText("‹");
+        if (mV2Ready && mWinV2On) {
+            // v2：浮窗收到右缘（宽度→1 挂屏外），guest 继续在虚拟屏跑
+            animWinV2Width(1);
+            ballAnimTo(edgeX());
+            View panel = mDrawer.findViewById(R.id.drawer_panel);
+            if (panel != null) {
+                panel.setVisibility(View.VISIBLE);
+            }
+            TLog.i("Float", "v2: window closed, guest stays on virtual display");
+            return;
+        }
         // 2.1.73：恢复「窗户底下的界面」（拉出前记的 task / HOME 兜底），
         // 绝不拉宿主主界面——用户反馈：收回后见到的应是原来的界面。
         restoreBeneath();
@@ -870,6 +1125,8 @@ public class FloatingService extends Service {
         super.onDestroy();
         cancelSnap();
         safeRemoveCurtain();
+        destroyWinV2();
+        VirtualScreen.release();
         if (mDrawer != null) {
             try {
                 if (mDrawer.isAttachedToWindow()) {
