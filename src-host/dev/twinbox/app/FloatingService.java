@@ -522,6 +522,12 @@ public class FloatingService extends Service {
             }
             int did = VirtualScreen.ensure(this);
             if (did < 0) {
+                // 2.2.3：未授权投影 → 指路（不静默降级，用户不知道为什么没画面）
+                if (!VirtualScreen.projectionReady()) {
+                    Toast.makeText(this,
+                            "浮窗画面需要一次授权：打开 TwinBox → 右上菜单 → 启用浮窗画面",
+                            Toast.LENGTH_LONG).show();
+                }
                 return false;
             }
             if (!mV2Ready) {

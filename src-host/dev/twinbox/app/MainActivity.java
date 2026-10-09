@@ -303,6 +303,37 @@ public class MainActivity extends Activity {
             i.putExtra(EXTRA_INSTALL_URI, data.getData().toString());
             startActivity(i);
         }
+        // TwinBox 2.2.3：MediaProjection 授权回执（v2 窗户显示链路）
+        if (requestCode == REQ_MEDIA_PROJECTION) {
+            VirtualScreen.onProjectionResult(this, resultCode, data);
+        }
+    }
+
+    /**
+     * TwinBox 2.2.3：请求屏幕投影授权（v2 窗户用）。
+     * ColorOS 上三方 app 无法用 VirtualDisplay 起私有/公有屏给引擎进程 launch
+     * （OWN_CONTENT_ONLY=跨进程拒 SecurityException；PUBLIC=要镜像权限）。
+     * MediaProjection 是官方授权通道：用户点一次"立即开始"，我们就拿到
+     * 带 token 的 projection，可以创建允许跨进程启动的虚拟屏。
+     * 也可以理解为：这一步 = 给"应用小窗"开系统级白名单。
+     */
+    private static final int REQ_MEDIA_PROJECTION = 7301;
+
+    /** 悬浮球窗户 v2 的授权入口（菜单/设置可调）。 */
+    public void requestProjection() {
+        try {
+            android.media.projection.MediaProjectionManager mpm =
+                    (android.media.projection.MediaProjectionManager)
+                            getSystemService(MEDIA_PROJECTION_SERVICE);
+            if (mpm == null) {
+                Toast.makeText(this, "系统不支持屏幕投影", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_MEDIA_PROJECTION);
+        } catch (Throwable t) {
+            TLog.e("Main", "requestProjection fail", t);
+            Toast.makeText(this, "无法发起屏幕投影授权", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void reload() {
@@ -703,6 +734,17 @@ public class MainActivity extends Activity {
         if (id == R.id.menu_files) {
             // TwinBox 2.1.58：容器内文件管理器
             startActivity(new Intent(this, FileExplorerActivity.class));
+            return true;
+        }
+        if (id == R.id.menu_projection) {
+            // TwinBox 2.2.3：浮窗画面授权（拉窗户显示真画面需要）
+            if (VirtualScreen.projectionReady()) {
+                Toast.makeText(this, "浮窗画面已授权", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "授权后：悬浮球拉出的窗户将显示应用实时画面",
+                        Toast.LENGTH_LONG).show();
+                requestProjection();
+            }
             return true;
         }
         if (id == R.id.menu_kill_all) {

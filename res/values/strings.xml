@@ -98,4 +98,6 @@
     <string name="btn_tasks_empty">暂无任务</string>
     <string name="btn_tasks_clear">清除已完成</string>
     <string name="drawer_handle_desc">拖动拉出/收起容器应用面板</string>
+    <!-- 2.2.3：浮窗画面授权（MediaProjection） -->
+    <string name="menu_projection">启用浮窗画面（授权一次）</string>
 </resources>

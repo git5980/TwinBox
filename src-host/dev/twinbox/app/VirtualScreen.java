@@ -1,6 +1,7 @@
 package dev.twinbox.app;
 
 import android.content.Context;
+import android.content.Intent;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.os.Build;
@@ -33,6 +34,10 @@ public final class VirtualScreen {
     private static VirtualDisplay sDisplay;
     private static int sDisplayId = -1;
     private static int sW, sH, sDpi;
+    /** 2.2.3：MediaProjection 通道（授权 token） */
+    private static android.media.projection.MediaProjection sProjection;
+    private static Intent sPendingResult;
+    private static int sPendingResultCode;
 
     private VirtualScreen() {
     }
@@ -47,18 +52,47 @@ public final class VirtualScreen {
     }
 
     /**
-     * 创建（或复用）虚拟屏。分辨率 = 物理屏真实像素（1:1，触摸坐标零变换）。
-     * Surface 可以稍后绑（TextureView available 回调时 setSurface）。
-     * 2.2.2：PUBLIC 屏——OWN_CONTENT_ONLY 是 private 屏，ColorOS 拒绝
-     * 其他进程（引擎 :x）launch 到它（真机日志实锤 SecurityException:
-     * "Permission Denial ... with launchDisplayId=8"）。PUBLIC 是 Cast/
-     * 双屏应用的公开机制，允许三方 launch。
+     * 2.2.3：创建（或复用）虚拟屏——MediaProjection 通道。
      *
-     * @return displayId；-1 = 失败（displayManager 不给建，几乎不可能）
+     * 路线考古（真机日志链）：三方 createVirtualDisplay 两个 flag 全死——
+     *  - OWN_CONTENT_ONLY → private 屏，ColorOS 拒引擎 :x 进程 launch（SecurityException
+     *    "Permission Denial ... with launchDisplayId"）
+     *  - PUBLIC → 要 ADD_MIRROR_DISPLAY/CAPTURE_VIDEO_OUTPUT（镜像类权限，三方无）
+     * 正解 = MediaProjection：用户在系统弹窗点一次"立即开始"，getMediaProjection
+     * 拿到带 token 的 projection → projection.createVirtualDisplay ——这个屏
+     * 天生允许跨进程 launch（Cast 同款机制）。
+     *
+     * 必须先有 projection（授权回执 onProjectionResult 存 Intent），没授权
+     * 返回 -1（调用方走 v1 窗帘）。
+     *
+     * @return displayId；-1 = 未授权/失败
      */
     public static int ensure(Context ctx) {
         if (sDisplayId >= 0) {
             return sDisplayId;
+        }
+        if (sProjection == null) {
+            if (sPendingResult == null) {
+                TLog.w(TAG, "ensure: no projection (user not authorized)");
+                return -1;
+            }
+            try {
+                android.media.projection.MediaProjectionManager mpm =
+                        (android.media.projection.MediaProjectionManager)
+                                ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                sProjection = mpm.getMediaProjection(sPendingResultCode, sPendingResult);
+                sProjection.registerCallback(new android.media.projection.MediaProjection.Callback() {
+                    @Override
+                    public void onStop() {
+                        TLog.w(TAG, "projection stopped by system/user");
+                        release();
+                    }
+                }, null);
+            } catch (Throwable t) {
+                TLog.e(TAG, "getMediaProjection fail", t);
+                sPendingResult = null;
+                return -1;
+            }
         }
         try {
             DisplayManager dm = (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
@@ -73,16 +107,19 @@ public final class VirtualScreen {
             sW = p.x;
             sH = p.y;
             sDpi = dm2.densityDpi;
-            sDisplay = dm.createVirtualDisplay(
+            // OWN_CONTENT_ONLY + projection token = 免镜像权限 + 可跨进程 launch。
+            // android-34 平台 jar 的签名：flags 在 Surface 前。
+            sDisplay = sProjection.createVirtualDisplay(
                     NAME + "@" + android.os.Process.myUid(),
-                    sW, sH, sDpi, null /* surface 延迟绑 */,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC);
+                    sW, sH, sDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
+                    null /* surface 延迟绑 */, null, null);
             if (sDisplay == null) {
                 TLog.e(TAG, "createVirtualDisplay null (w=" + sW + " h=" + sH + ")");
                 return -1;
             }
             sDisplayId = sDisplay.getDisplay().getDisplayId();
-            TLog.i(TAG, "virtual display created: id=" + sDisplayId
+            TLog.i(TAG, "virtual display created (projection): id=" + sDisplayId
                     + " " + sW + "x" + sH + " dpi=" + sDpi);
             return sDisplayId;
         } catch (Throwable t) {
@@ -90,6 +127,23 @@ public final class VirtualScreen {
             release();
             return -1;
         }
+    }
+
+    /** 2.2.3：MediaProjection 授权回执（MainActivity.onActivityResult 转发）。 */
+    public static void onProjectionResult(Context ctx, int resultCode, Intent data) {
+        if (resultCode == android.app.Activity.RESULT_OK && data != null) {
+            sPendingResultCode = resultCode;
+            sPendingResult = data;
+            TLog.i(TAG, "projection authorized (token saved)");
+        } else {
+            sPendingResult = null;
+            TLog.w(TAG, "projection denied by user");
+        }
+    }
+
+    /** 是否已授权（引导 UI 用）。 */
+    public static boolean projectionReady() {
+        return sProjection != null || sPendingResult != null;
     }
 
     /** TextureView 的 Surface 可用了 → 绑到虚拟屏（画面开始流动）。 */
@@ -133,6 +187,7 @@ public final class VirtualScreen {
         }
         sDisplay = null;
         sDisplayId = -1;
+        // token 保留（sPendingResult 不清）：一次授权，进程存活期间可重建屏
     }
 
     /** 把 setLaunchDisplayId 塞进 ActivityOptions（hidden API，宿主已全量豁免）。 */
