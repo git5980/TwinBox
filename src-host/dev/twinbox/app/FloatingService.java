@@ -522,11 +522,18 @@ public class FloatingService extends Service {
             }
             int did = VirtualScreen.ensure(this);
             if (did < 0) {
-                // 2.2.3：未授权投影 → 指路（不静默降级，用户不知道为什么没画面）
+                // 2.2.4：未授权投影 → 直接弹系统授权窗（一步到位，不再让用户
+                // 去主界面找菜单）。SALW（悬浮窗）权限豁免 BAL，Service 可拉 Activity。
                 if (!VirtualScreen.projectionReady()) {
-                    Toast.makeText(this,
-                            "浮窗画面需要一次授权：打开 TwinBox → 右上菜单 → 启用浮窗画面",
+                    Toast.makeText(this, "正在请求浮窗画面授权，点「立即开始」",
                             Toast.LENGTH_LONG).show();
+                    try {
+                        Intent i = new Intent(this, ProjectionDialogActivity.class);
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i);
+                    } catch (Throwable t) {
+                        TLog.w("Float", "launch projection dialog fail: " + t);
+                    }
                 }
                 return false;
             }
