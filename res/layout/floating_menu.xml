@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TwinBox 2.3.0：悬浮球菜单（独立窗口，弹在球附近）。
+  v2.0 架构：球窗口=球本身（固定 60dp），菜单不再是球窗容器的一部分——
+  点球弹出，点菜单外/再点球即关。垂直避让：球上半屏→菜单出下方，反之出上方。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="@dimen/panel_width"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_panel"
+    android:padding="@dimen/md_space_sm">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="@dimen/md_space_sm"
+        android:paddingEnd="@dimen/md_space_sm"
+        android:paddingTop="@dimen/md_space_sm"
+        android:paddingBottom="@dimen/md_space_sm"
+        android:textSize="@dimen/md_type_label"
+        android:textColor="@color/md_on_surface_variant"
+        android:text="@string/panel_title" />
+
+    <LinearLayout
+        android:id="@+id/panel_items"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+</LinearLayout>

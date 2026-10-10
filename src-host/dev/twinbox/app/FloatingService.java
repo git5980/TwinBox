@@ -7,9 +7,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.graphics.drawable.ColorDrawable;
 import android.os.IBinder;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -17,6 +15,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -25,1345 +24,509 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 悬浮抽屉 + 全屏窗户（VMOS 式）：贴右缘把手 + 侧面板 + 应用拉出/收回。
+ * TwinBox 2.3.1 悬浮球（VMOS 式）。
  *
- * TwinBox 2.1.72 窗户交互（用户定义）：
- *  - 容器应用在后台时，拖把手从右到左 → 后台应用像窗户一样被拉出（全屏
- *    跟手：真 task 瞬时调前台，深色半透明窗帘盖着，窗帘=窗户未拉开的部分）；
- *  - 拉出过半松手 → 全屏显示（窗户全开），把手吸附左缘；
- *  - 把手往回拖（左→右）→ 窗帘从左侧盖回（应用逐渐被收起），
- *    过半松手 → 应用收回后台（宿主回前台，窗帘盖着无感切换），把手回右缘；
- *  - 全开态点按把手 = 一键收回。
+ * 【架构（三层拍板史）】
+ *  1. 手势层：浮窗 Demo v2.0（十轮真机迭代）——球窗口=球本身（固定小窗，
+ *     拖动逐帧 updateViewLayout），窗户露出量=屏宽−球x 的绑定语义；
+ *  2. 画面层：浮窗 Demo 的"获取画面"实现（2026-10-10 真机反馈拍板）——
+ *     窗户内容=宿主自绘 VmScreenView（容器应用网格），**不再用 MediaProjection
+ *     获取屏幕内容**（授权链路烦、ColorOS 下投出来的是主屏内容不是容器应用）；
+ *     VMOS 原版语义：浮窗里的画面是宿主 View 层的东西（libmci 视频流），
+ *     我们用自绘替视频流——"TwinBox 的视频流=容器应用网格"；
+ *  3. 数据层：VBox（VirtualApp 引擎）真实 installed/running 数据，后台线程加载。
  *
- * TwinBox 2.1.63 抽屉（保留，无运行中应用时拖动=面板）：
- *  - 无 guest 运行时：横向拖把手=面板拉出/收回，点按=toggle；
- *  - 纵向拖：整抽屉挪位；展开态点外部：收回。
- *  - 有 guest 运行时：拖动一律=窗户，面板靠点按展开。
- *
- * 历史包袱（2.0.8 修复清单）仍在生效：DOWN 必须 return true（否则整棵
- * 手势链断）；空容器不 removeView 未 attach 的 view（safeRemove 统一出口）。
+ * 交互：球自由拖动（松手停原位）；右半屏向左拖=拉出窗户（绑定跟手），
+ * 过半松手全开、不足收回；窗户开着向右拖=收回；全开态点球=一键收回；
+ * 平时点球=菜单（运行中+启动区）。窗户里点应用=主屏启动容器应用+收窗。
  */
-public class FloatingService extends Service {
+public class FloatingService extends Service implements VmScreenView.Launcher {
 
-    private static volatile boolean sRunning = false;
+    private static final String TAG = "Float";
+    private static final String CH = "twinbox_float";
 
-    public static boolean isRunning() {
-        return sRunning;
-    }
+    static volatile boolean sRunning = false;
 
     private WindowManager mWm;
-    private View mDrawer;
-    private View mHandle;
-    private WindowManager.LayoutParams mDrawerLp;
-    private ValueAnimator mSnapAnim;
+    private int mScreenW, mScreenH, mSlop, mBallSize;
 
-    /** 抽屉容器总宽（把手+面板），measure 后回填 */
-    private int mContainerW;
-    /** 2.2.1：面板 VISIBLE 时的容器宽（面板 GONE 后容器只剩球，展开位要用旧值） */
-    private int mOpenContainerW;
-    /** 把手宽（贴边态容器留在屏内的部分） */
-    private int mHandleW;
-    private int mScreenW;
-    private int mScreenH;
+    // 球（窗口=球本身）
+    private View mBall;
+    private WindowManager.LayoutParams mBallLp;
 
+    // 窗户（内容 = VmScreenView 自绘）
+    private FrameLayout mWin;
+    private VmScreenView mVmView;
+    private WindowManager.LayoutParams mWinLp;
+
+    // 菜单
+    private LinearLayout mMenu;
+    private WindowManager.LayoutParams mMenuLp;
+
+    // 手势状态（Demo v2.0 全套）
     private float mDownX, mDownY;
     private int mStartX, mStartY;
-    private boolean mDragging;
+    private boolean mDragging, mWinDrag, mWinOpen, mMenuEatenOnDown, mDeadGesture;
 
-    // ---------------- TwinBox 2.1.72：全屏窗户（VMOS 式把手拉出/收回） ----------------
-    // 用户定义的交互：应用退后台后球=把手；把手从右拖到左，后台应用像窗户
-    // 一样被拖出来（全屏、跟手）；拖回去像窗户收回。拖动全程底下是真 task
-    // （moveTaskToFront 瞬时调来，被窗帘半透明盖着），窗帘跟手平移——
-    // "live 窗户"效果，不依赖 freeform/截图/特权。
-    private android.widget.FrameLayout mCurtain;   // 全屏窗帘（深色半透明）
-    private android.widget.TextView mCurtainTitle;
-    private android.widget.TextView mCurtainHint;
-    private WindowManager.LayoutParams mCurtainLp;
-    private boolean mCurtainOn;
-    private boolean mWinDrag;        // 窗户拖动中
-    private boolean mWinPullOut;     // true=拖出（右→左）false=拖回（左→右）
-    private boolean mGuestOpen;      // 窗户全开态（应用全屏，球贴左缘）
-    private int mPullTaskId = -1;    // 窗户目标 task（系统侧）
-    private String mPullLabel = "";
-    private String mPullPkg = "";     // 窗户目标包名（task 死了重启用）
-    private int mBeneathTaskId = -1;  // 窗户底下的 task（拉出前前台，收回时恢复它）
-    private List<com.lody.virtual.remote.AppTaskInfo> mRunCache;
-    /** 包名 → 应用名缓存（fillPanel 维护，refreshRunCache 取 label 用） */
-    private final java.util.Map<String, String> mLabelByPkg = new java.util.HashMap<String, String>();
-    /** 运行列表缓存时间戳（refreshRunCache 节流用，2.1.74 合并自 DeepSeek） */
-    private long mRunCacheAt;
-    /** 连续手势内刷新运行列表的最小间隔（ms）——避免主线程反复打引擎 IPC */
-    private static final long RUN_CACHE_TTL_MS = 600L;
-
-    // ------------- TwinBox 2.2.2：卡顿治理（binder 频率） -------------
-    /** 运行列表后台轮询器：2s 一次引擎 IPC，DOWN 手势零 IPC（治拖动卡顿根源） */
-    private android.os.Handler mPollHandler;
-    private Runnable mPollRunnable;
-    /** v2 连续失败退避（10s 内不再试 v2，直接 v1——治"每次拖都死等 3.5s"） */
-    private static long sLastV2Fail;
-    /** 主线程 Handler（fillPanel 异步回填用） */
-    private android.os.Handler mUi;
-
-    // ------------- TwinBox 2.2.0：窗户 v2（VMOS 架构：虚拟屏 + TextureView 悬浮窗） -------------
-    private android.widget.FrameLayout mWinV2;        // 全屏浮窗容器（右缘贴边，宽度=拉开量）
-    private android.view.TextureView mWinTexture;      // guest 画面（虚拟屏 Surface）
-    private WindowManager.LayoutParams mWinV2Lp;
-    private boolean mWinV2On;
-    private boolean mV2Ready;                          // 虚拟屏+guest 已就位（v2 生效中）
+    // 动画（窗户绑定动画：窗带球走）
+    private ValueAnimator mWinAnim;
+    private ValueAnimator mBallAnim;
 
     @Override
     public IBinder onBind(Intent intent) {
         return null;
     }
 
+    public static boolean isRunning() {
+        return sRunning;
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
-        mWm = (WindowManager) getSystemService(WINDOW_SERVICE);
         sRunning = true;
+        mWm = (WindowManager) getSystemService(WINDOW_SERVICE);
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         mScreenW = dm.widthPixels;
         mScreenH = dm.heightPixels;
-        mUi = new android.os.Handler(android.os.Looper.getMainLooper());
-        try {
-            startForeground(NOTIFY_ID, buildNotification());
-        } catch (Throwable t) {
-            // Android 12+ 后台起 FGS / 14+ specialUse 缺权限 → 退化普通服务
-            TLog.e("Float", "startForeground fail, degrade to background", t);
-        }
-        createDrawer();
-        startRunPoller();   // 2.2.2：后台轮询运行列表，DOWN 手势零 IPC
+        mSlop = Math.max(12, android.view.ViewConfiguration.get(this).getScaledTouchSlop());
+        mBallSize = (int) (60 * dm.density);
+        startForeground(9, buildNotification());
+        buildWindow();
+        buildBall();
     }
-
-    /** 2.2.2：运行列表后台轮询（2s 一次）。手势 DOWN 只读内存——治卡顿根源。 */
-    private void startRunPoller() {
-        mPollHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-        mPollRunnable = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    final Thread th = new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            final List<com.lody.virtual.remote.AppTaskInfo> r;
-                            try {
-                                r = VBox.runningTasks();
-                            } catch (Throwable t) {
-                                return;
-                            }
-                            if (mPollHandler == null) {
-                                return;
-                            }
-                            mPollHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    applyRunCache(r);
-                                }
-                            });
-                        }
-                    }, "tb-poll");
-                    th.start();
-                } catch (Throwable ignore) {
-                }
-                if (mPollHandler != null) {
-                    mPollHandler.postDelayed(this, 2000);
-                }
-            }
-        };
-        mPollHandler.post(mPollRunnable);
-    }
-
-    /** 引擎返回的运行列表落到字段（主线程）。 */
-    private void applyRunCache(List<com.lody.virtual.remote.AppTaskInfo> r) {
-        if (r == null) {
-            return;
-        }
-        mRunCache = r;
-        mRunCacheAt = android.os.SystemClock.uptimeMillis();
-        if (!r.isEmpty()) {
-            boolean keep = false;
-            for (com.lody.virtual.remote.AppTaskInfo ti : r) {
-                if (ti.taskId == mPullTaskId) {
-                    keep = true;
-                    break;
-                }
-            }
-            if (!keep) {
-                com.lody.virtual.remote.AppTaskInfo t0 = r.get(0);
-                mPullTaskId = t0.taskId;
-                String pkg = t0.baseIntent != null && t0.baseIntent.getComponent() != null
-                        ? t0.baseIntent.getComponent().getPackageName()
-                        : (t0.topActivity != null ? t0.topActivity.getPackageName() : "?");
-                mPullPkg = pkg == null ? "" : pkg;
-                String label = mLabelByPkg != null ? mLabelByPkg.get(pkg) : null;
-                mPullLabel = label != null ? label : pkg;
-            }
-        } else {
-            mPullTaskId = -1;
-        }
-    }
-
-    private static final int NOTIFY_ID = 9;
 
     private Notification buildNotification() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel ch = new NotificationChannel("float", "悬浮球",
-                NotificationManager.IMPORTANCE_LOW);
-        nm.createNotificationChannel(ch);
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel ch = new NotificationChannel(CH, "悬浮球",
+                    NotificationManager.IMPORTANCE_LOW);
+            nm.createNotificationChannel(ch);
+        }
         PendingIntent pi = PendingIntent.getActivity(this, 0,
                 new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this, "float")
-                .setSmallIcon(android.R.drawable.ic_menu_compass)
-                .setContentTitle("双生盒悬浮抽屉")
-                .setContentText("拖把手：像窗户一样拉出/收回容器应用；点按：列表")
+        Notification.Builder b = android.os.Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, CH)
+                : new Notification.Builder(this);
+        b.setSmallIcon(android.R.drawable.ic_menu_compass)
+                .setContentTitle("TwinBox 悬浮球已开启")
+                .setContentText("拖动圆球管理容器应用")
                 .setContentIntent(pi)
-                .setOngoing(true)
-                .build();
+                .setOngoing(true);
+        return b.build();
     }
 
-    // ---------------------------------------------------------------- 抽屉
+    // ---------------------------------------------------------------- 窗户
 
-    private void createDrawer() {
-        mDrawer = LayoutInflater.from(this).inflate(R.layout.floating_drawer, null, false);
-        mHandle = mDrawer.findViewById(R.id.drawer_handle);
+    private void buildWindow() {
+        mWin = new FrameLayout(this);
+        mWin.setBackgroundColor(0xFF06080D);
+        mVmView = new VmScreenView(this, this);
+        mWin.addView(mVmView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+        // 关窗态"真正不存在"：0×0 + GONE + NOT_TOUCHABLE（Demo v1.1 结论）。
+        // 熄灭=零像素零触摸零合成；TRANSLUCENT 保证部分拉出时透出桌面。
+        mWinLp = new WindowManager.LayoutParams(
+                0, 0,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.TRANSLUCENT);
+        mWinLp.gravity = Gravity.TOP | Gravity.START;
+        mWinLp.x = 0;
+        mWinLp.y = 0;
+        mWin.setVisibility(View.GONE);
+        mWin.setTranslationX(mScreenW);
+        try {
+            mWm.addView(mWin, mWinLp);
+        } catch (Throwable t) {
+            TLog.e(TAG, "win addView fail", t);
+        }
+    }
 
-        final WindowManager.LayoutParams lp = new WindowManager.LayoutParams();
-        mDrawerLp = lp;
-        lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-        lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
-        lp.format = PixelFormat.TRANSLUCENT;
-        lp.width = WindowManager.LayoutParams.WRAP_CONTENT;
-        lp.height = WindowManager.LayoutParams.WRAP_CONTENT;
-        lp.gravity = Gravity.TOP | Gravity.LEFT;
-        lp.x = mScreenW; // measure 前先放屏外，layout 回调里再贴边
-
-        // 容器 measure 完成后贴边（拿真实宽度算贴边位）
-        mDrawer.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-            @Override
-            public void onLayoutChange(View v, int left, int top, int right, int bottom,
-                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                int w = right - left;
-                int handleW = mHandle.getWidth();
-                if (w > 0 && handleW > 0 && (w != mContainerW || handleW != mHandleW)) {
-                    mContainerW = w;
-                    mHandleW = handleW;
-                    View panel = mDrawer.findViewById(R.id.drawer_panel);
-                    if (panel != null && panel.getVisibility() == View.VISIBLE) {
-                        mOpenContainerW = w;   // 2.2.1：记住面板展开时的容器宽
-                    }
-                    if (mDrawerLp.x >= mScreenW - 4) {
-                        // 首次：贴边（只露球）
-                        mDrawerLp.x = edgeX();
-                        applyLayout();
-                    }
-                }
+    /** 窗户点亮/熄灭（GONE 根视图 → ViewRootImpl 不建 surface）。 */
+    private void setWinActive(boolean on) {
+        try {
+            if (on) {
+                mWinLp.width = mScreenW;
+                mWinLp.height = mScreenH;
+                mWinLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                mWin.setVisibility(View.VISIBLE);
+            } else {
+                mWin.setVisibility(View.GONE);
+                mWinLp.width = 0;
+                mWinLp.height = 0;
+                mWinLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             }
-        });
+            mWm.updateViewLayout(mWin, mWinLp);
+        } catch (Throwable ignore) {
+        }
+    }
 
-        fillPanel();
-        // TwinBox 2.1.72：启动即预取窗户目标（不依赖用户先开过面板）。
-        // fillPanel 里已经 force 刷新过一次，这里只是保险，直接沿用缓存。
-        refreshRunCache(false);
+    /** 窗户露出量（球 x 的绝对函数：露出 = 屏宽 − 球左缘 x）。 */
+    private void setWinProgress(int amount) {
+        mWin.setTranslationX(Math.max(0, Math.min(mScreenW, mScreenW - amount)));
+    }
 
-        mHandle.setOnTouchListener(new View.OnTouchListener() {
+    // ---------------------------------------------------------------- 球
+
+    private void buildBall() {
+        FrameLayout ballRoot = new FrameLayout(this);
+        TextView face = new TextView(this);
+        face.setBackgroundResource(R.drawable.bg_ball);
+        face.setText("◫");
+        face.setTextColor(0xFF8FA8E8);
+        face.setTextSize(20);
+        face.setGravity(Gravity.CENTER);
+        // gravity=TOP|START：球窗口=球本身恒定，face 钉在原点（Demo v1.6 教训）
+        ballRoot.addView(face, new FrameLayout.LayoutParams(
+                mBallSize, mBallSize, Gravity.TOP | Gravity.START));
+        mBall = ballRoot;
+        mBallLp = new WindowManager.LayoutParams(
+                mBallSize, mBallSize,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        mBallLp.gravity = Gravity.TOP | Gravity.START;
+        mBallLp.x = mScreenW - mBallSize;
+        mBallLp.y = mScreenH / 3;
+        mBall.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 return handleTouch(event);
             }
         });
-        // 展开态点容器外 → 收回（OUTSIDE 只在 DOWN 时派发给 watch 方）
-        mDrawer.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                if (event.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
-                    collapsePanel();
-                    return true;
-                }
-                return false;
-            }
-        });
-
-        // 2.2.1：球形态起步（面板 GONE，点击才展开——VMOS 同款）
-        View panel0 = mDrawer.findViewById(R.id.drawer_panel);
-        if (panel0 != null) {
-            panel0.setVisibility(View.GONE);
-        }
         try {
-            mWm.addView(mDrawer, lp);
+            mWm.addView(mBall, mBallLp);
         } catch (Throwable t) {
-            TLog.e("Float", "addView drawer fail", t);
+            TLog.e(TAG, "ball addView fail", t);
+            Toast.makeText(this, "悬浮球创建失败：" + t, Toast.LENGTH_LONG).show();
         }
     }
 
-    /** 贴边位：容器只露球（面板 GONE 态容器宽=球宽） */
-    private int edgeX() {
-        return mScreenW - mHandleW;
-    }
-
-    /** 展开位：面板全露，球贴着面板左缘 */
-    private int openX() {
-        return mScreenW - Math.max(mOpenContainerW, mContainerW);
-    }
-
-    /** 2.2.1：面板展开（点击球）。面板 VISIBLE + 刷新内容 + 滑到展开位。 */
-    private void expandPanel() {
-        View panel = mDrawer.findViewById(R.id.drawer_panel);
-        if (panel != null) {
-            panel.setVisibility(View.VISIBLE);
+    /** 球窗口=球本身：逐帧 updateViewLayout（可见位置永远=逻辑位置）。 */
+    private void moveBallTo(int x, int y) {
+        mBallLp.x = Math.max(0, Math.min(mScreenW - mBallSize, x));
+        mBallLp.y = Math.max(0, Math.min(mScreenH - mBallSize, y));
+        try {
+            mWm.updateViewLayout(mBall, mBallLp);
+        } catch (Throwable t) {
+            TLog.w(TAG, "moveBallTo fail: " + t);
         }
-        fillPanel();
-        // 等 measure（容器宽更新 onLayoutChange 记 mOpenContainerW）后再滑
-        mDrawer.post(new Runnable() {
-            @Override
-            public void run() {
-                snapTo(openX());
-            }
-        });
     }
 
-    /** 2.2.1：面板收起（再点球 / 点外部）。滑回贴边位，动画后 GONE。 */
-    private void collapsePanel() {
-        snapTo(edgeX());
-        mDrawer.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                View panel = mDrawer.findViewById(R.id.drawer_panel);
-                if (panel != null && !mGuestOpen && !mWinDrag) {
-                    panel.setVisibility(View.GONE);
-                }
-            }
-        }, 240);
-    }
+    // ---------------------------------------------------------------- 手势（Demo v2.0）
 
-    /**
-     * 2.2.2 手势（卡顿治理版）：拖动全程零 binder——球用 translationX/Y 跟手
-     * （App 进程渲染），松手才把 translation 折进 LP 做一次 updateViewLayout。
-     * 窗户判定加门槛：球贴右缘 + 明确向左拖（dx<-24）+ 有 guest 才进窗户模式，
-     * 其余拖动一律自由移动（误触率大降）。DOWN 零 IPC（poller 后台保数据新鲜）。
-     */
     private boolean handleTouch(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                cancelSnap();
+                if (mBallAnim != null) {
+                    mBallAnim.cancel();
+                    mBallAnim = null;
+                }
+                if (mWinAnim != null) {
+                    mWinAnim.cancel();
+                    mWinAnim = null;
+                    // 动画被打断不能停在半空：按目标态重启完成动画（Demo v1.7 P1）
+                    if (mWinOpen) {
+                        winAnimTo(mScreenW);
+                    } else {
+                        winAnimTo(0);
+                    }
+                }
                 mDownX = event.getRawX();
                 mDownY = event.getRawY();
-                mStartX = mDrawerLp.x;
-                mStartY = mDrawerLp.y;
+                mStartX = mBallLp.x;
+                mStartY = mBallLp.y;
                 mDragging = false;
                 mWinDrag = false;
+                mDeadGesture = false;
+                // 菜单盖球防御（Demo v1.2）：按下即吸收关闭
+                mMenuEatenOnDown = mMenu != null && mMenu.isAttachedToWindow();
+                if (mMenuEatenOnDown) {
+                    hideMenu();
+                }
+                return true;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                // 多指=死亡手势（Demo v1.7 P3）：后续 MOVE 忽略，UP 只复位
+                mDeadGesture = true;
                 return true;
             case MotionEvent.ACTION_MOVE: {
+                if (mDeadGesture) {
+                    return true;
+                }
                 float dx = event.getRawX() - mDownX;
                 float dy = event.getRawY() - mDownY;
-                if (!mDragging && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) {
+                if (!mDragging && (Math.abs(dx) > mSlop || Math.abs(dy) > mSlop)) {
                     mDragging = true;
-                    // 拖动起手：收面板（GONE，纯渲染层）
-                    View panel = mDrawer.findViewById(R.id.drawer_panel);
-                    if (panel != null && panel.getVisibility() == View.VISIBLE) {
-                        panel.setVisibility(View.GONE);
-                    }
-                    // 窗户门槛：球贴右缘 + 明确向左 + 有 guest → 窗户模式
-                    boolean hasGuest = mPullTaskId >= 0
-                            && mRunCache != null && !mRunCache.isEmpty();
-                    boolean dockedRight = mStartX >= mScreenW - mHandleW - 16;
-                    if (hasGuest && dockedRight && dx < -24) {
-                        mWinPullOut = true;
-                        beginWinDrag();
-                    }
+                    hideMenu();
                 }
                 if (!mDragging) {
                     return true;
                 }
-                if (mWinDrag) {
-                    // 窗户：球左移 = 窗户展开量（translation，零 binder）
-                    int nx = (int) Math.max(0, Math.min(mScreenW - 8, mStartX + dx));
-                    mDrawer.setTranslationX(nx - mStartX);
-                    if (mV2Ready && mWinV2On) {
-                        setWinV2Progress(mScreenW - nx);
-                    } else {
-                        setCurtainPos(nx);
+                // 绑定模式判定（Demo v1.18）：球在右半屏（窗关）/任意（窗开）
+                // 横向位移 ≥ touchSlop 即进窗户模式——露出量是球 x 的绝对函数。
+                if (!mWinDrag) {
+                    boolean canOpen = !mWinOpen && mStartX >= mScreenW / 2;
+                    boolean canClose = mWinOpen;
+                    if ((canOpen && dx < -mSlop) || (canClose && dx > mSlop)) {
+                        mWinDrag = true;
                     }
-                    mDrawer.setAlpha(0.55f);
-                    return true;
                 }
-                // 自由移动：translation 跟手（零 binder）
-                int handleH = Math.max(1, mHandle.getHeight());
-                int tx = (int) Math.max(-mStartX, Math.min(edgeX() - mStartX, dx));
-                int ty = (int) Math.max(-mStartY, Math.min(mScreenH - handleH - mStartY, dy));
-                mDrawer.setTranslationX(tx);
-                mDrawer.setTranslationY(ty);
-                mDrawer.setAlpha(0.55f);
-                return true;
-            }
-            case MotionEvent.ACTION_UP: {
-                boolean moved = Math.abs(event.getRawX() - mDownX) > 12
-                        || Math.abs(event.getRawY() - mDownY) > 12;
                 if (mWinDrag) {
-                    mWinDrag = false;
-                    // 折叠 translation 进 LP（一次 binder）
-                    mDrawerLp.x = mStartX + (int) mDrawer.getTranslationX();
-                    mDrawer.setTranslationX(0);
-                    applyLayout();
-                    mDrawer.setAlpha(1f);
-                    if (mDrawerLp.x < mScreenW / 2) {
-                        winOpen();
-                    } else {
-                        winClose();
+                    if (mWinAnim != null) {
+                        mWinAnim.cancel();
+                        mWinAnim = null;
                     }
-                    return true;
-                }
-                // 自由移动结算（一次 binder）
-                if (moved) {
-                    mDrawerLp.x = mStartX + (int) mDrawer.getTranslationX();
-                    mDrawerLp.y = mStartY + (int) mDrawer.getTranslationY();
-                    mDrawer.setTranslationX(0);
-                    mDrawer.setTranslationY(0);
-                    applyLayout();
-                    snapTo(mDrawerLp.x < mScreenW / 2 ? 0 : edgeX());
+                    int bx = (int) Math.max(0, Math.min(mScreenW - 8, mStartX + dx));
+                    if (mWinLp.width == 0) {
+                        // 拉出首帧：先摆露出量再点亮，防全屏内容闪现一帧
+                        setWinProgress(mScreenW - bx);
+                        setWinActive(true);
+                    }
+                    setWinProgress(mScreenW - bx);
+                    moveBallTo(bx, mStartY + (int) dy);
                 } else {
-                    mDrawer.setTranslationX(0);
-                    mDrawer.setTranslationY(0);
+                    // 自由移动（含窗关时纯竖直拖动；clamp 完全可见范围）
+                    moveBallTo(mStartX + (int) dx, mStartY + (int) dy);
                 }
-                mDrawer.setAlpha(1f);
-                if (!moved) {
-                    if (mGuestOpen) {
-                        winClose();
-                        return true;
-                    }
-                    View panel = mDrawer.findViewById(R.id.drawer_panel);
-                    boolean showing = panel != null && panel.getVisibility() == View.VISIBLE;
-                    if (showing) {
-                        collapsePanel();
-                    } else {
-                        expandPanel();
-                    }
-                }
-                mDragging = false;
+                mBall.setAlpha(0.55f);
                 return true;
             }
+            case MotionEvent.ACTION_UP:
+                return endGesture(event);
             case MotionEvent.ACTION_CANCEL:
-                if (mWinDrag) {
-                    mWinDrag = false;
-                    mDrawerLp.x = mStartX + (int) mDrawer.getTranslationX();
-                    mDrawer.setTranslationX(0);
-                    applyLayout();
-                    mDrawer.setAlpha(1f);
-                    if (mDrawerLp.x < mScreenW / 2) {
-                        winOpen();
-                    } else {
-                        winClose();
-                    }
-                    return true;
-                }
-                mDrawerLp.x = mStartX + (int) mDrawer.getTranslationX();
-                mDrawerLp.y = mStartY + (int) mDrawer.getTranslationY();
-                mDrawer.setTranslationX(0);
-                mDrawer.setTranslationY(0);
-                applyLayout();
-                snapTo(mDrawerLp.x < mScreenW / 2 ? 0 : edgeX());
-                mDragging = false;
-                return true;
+                return endGesture(event);
             default:
                 return false;
         }
     }
 
-    // ---------------------------------------------------------------- 全屏窗户
-
-    /** 窗户拖动开始：v2（虚拟屏浮窗）优先，v1（窗帘+task切换）兜底。 */
-    private void beginWinDrag() {
-        mWinDrag = true;
-        // 面板收起：窗户模式容器只剩把手（面板 GONE），不挡底下的真应用
-        View panel = mDrawer.findViewById(R.id.drawer_panel);
-        if (panel != null) {
-            panel.setVisibility(View.GONE);
+    private boolean endGesture(MotionEvent event) {
+        if (mDeadGesture) {
+            mDeadGesture = false;
+            mDragging = false;
+            mWinDrag = false;
+            mMenuEatenOnDown = false;
+            mBall.setAlpha(1f);
+            return true;
         }
-        // 把手置顶（浮窗后 add 会盖住它，拖动就断了）
-        try {
-            mWm.removeView(mDrawer);
-            mWm.addView(mDrawer, mDrawerLp);
-        } catch (Throwable ignore) {
-        }
-        if (mWinPullOut) {
-            // 拉出：v2 先试（虚拟屏 + TextureView 浮窗）
-            if (!startWindowV2()) {
-                // 降级 v1：记住窗户底下的 task + robust 拉真 task 到前台
-                mBeneathTaskId = captureBeneathTask();
-                bringGuestRobust();
-                showCurtain();
+        boolean moved = Math.abs(event.getRawX() - mDownX) > mSlop
+                || Math.abs(event.getRawY() - mDownY) > mSlop;
+        mBall.setAlpha(1f);
+        if (mWinDrag) {
+            mWinDrag = false;
+            if (mBallLp.x < mScreenW / 2) {
+                winOpen();
             } else {
-                // v2 起飞：先窗帘垫场（TextureView 出帧前是透明的），
-                // 出帧后 verifyV2Async 会撤窗帘、浮窗亮起
-                showCurtain();
-            }
-        } else {
-            // 拖回：v1 才需要窗帘（v2 底下本来就是原界面）
-            if (!mV2Ready) {
-                showCurtain();
-            }
-        }
-    }
-
-    /**
-     * TwinBox 2.2.0：窗户 v2 启动（VMOS 架构复用）。
-     * 虚拟屏 + guest launch 到虚拟屏 + TextureView 全屏浮窗（贴右缘，宽度=拉开量）。
-     * 首帧到达（getTimestamp 变化）前浮窗透明 → 窗帘垫场；到达后 v2 接管。
-     */
-    private boolean startWindowV2() {
-        try {
-            // 2.2.2：v2 失败退避 10s（连续拖动不再反复等验证——治“很难用”）
-            if (android.os.SystemClock.uptimeMillis() - sLastV2Fail < 10000) {
-                return false;
-            }
-            if (mPullPkg == null || mPullPkg.length() == 0) {
-                return false;
-            }
-            int did = VirtualScreen.ensure(this);
-            if (did < 0) {
-                // 2.2.4：未授权投影 → 直接弹系统授权窗（一步到位，不再让用户
-                // 去主界面找菜单）。SALW（悬浮窗）权限豁免 BAL，Service 可拉 Activity。
-                if (!VirtualScreen.projectionReady()) {
-                    Toast.makeText(this, "正在请求浮窗画面授权，点「立即开始」",
-                            Toast.LENGTH_LONG).show();
-                    try {
-                        Intent i = new Intent(this, ProjectionDialogActivity.class);
-                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(i);
-                    } catch (Throwable t) {
-                        TLog.w("Float", "launch projection dialog fail: " + t);
-                    }
-                }
-                return false;
-            }
-            if (!mV2Ready) {
-                buildWinV2();
-                // 验证位：240px（1px 时 Surface 过小，验证环境不真实）
-                setWinV2Progress(240);
-                migrateAndLaunch(did);
-            } else {
-                // 拖动中 LP.x 是手势起点，视觉位置要加 translation
-                int visX = mDrawerLp.x + (int) mDrawer.getTranslationX();
-                setWinV2Progress(mScreenW - visX);
+                winClose();
             }
             return true;
-        } catch (Throwable t) {
-            TLog.e("Float", "startWindowV2 fail", t);
-            return false;
         }
-    }
-
-    /**
-     * 2.2.1：v2 冷迁移 + 启动（后台线程）。
-     * 真机日志实锤：AMS 对已存在的 task 忽略 launchDisplayId（Task 始终
-     * d=0）。guest 已在主屏跑时必须先 finishAndRemoveTask（同 uid appTask
-     * 可 finish 自己的），再冷 launchToDisplay——新 task born on display N。
-     * 代价：activity 重建（抖音回首页）。v2 语义边界，先保画面通路。
-     */
-    private void migrateAndLaunch(final int displayId) {
-        final String pkg = mPullPkg;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    boolean killed = false;
-                    try {
-                        android.app.ActivityManager am =
-                                (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-                        for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
-                            android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
-                            if (ri != null && ri.taskId == mPullTaskId) {
-                                t.finishAndRemoveTask();
-                                killed = true;
-                                break;
-                            }
-                        }
-                    } catch (Throwable tk) {
-                        TLog.w("Float", "v2 migrate finish fail: " + tk);
-                    }
-                    if (killed) {
-                        TLog.i("Float", "v2: main-screen task " + mPullTaskId
-                                + " finished → cold relaunch on display " + displayId);
-                        android.os.SystemClock.sleep(300);
-                    }
-                    int res = VBox.launchToDisplay(FloatingService.this, pkg, 0, displayId);
-                    if (res != 0) {
-                        // 2.2.5：launch 失败立即降级 v1——之前会继续跑 verify，
-                        // 而空屏也会推帧（壁纸/空内容）→ timestamp 前进 →
-                        // verify 假阳性 live=true → mV2Ready 卡在假就绪，
-                        // 用户看到的是"没效果"（空白浮窗/黑屏）。
-                        TLog.w("Float", "v2: launchToDisplay res=" + res + " → immediate v1");
-                        new android.os.Handler(android.os.Looper.getMainLooper())
-                                .post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        sLastV2Fail = android.os.SystemClock.uptimeMillis();
-                                        destroyWinV2();
-                                        mBeneathTaskId = captureBeneathTask();
-                                        bringGuestRobust();
-                                    }
-                                });
-                        return;
-                    }
-                    verifyV2Async(displayId);
-                } catch (Throwable t) {
-                    TLog.e("Float", "migrateAndLaunch fail", t);
-                }
-            }
-        }, "tb-v2-mig").start();
-    }
-
-    /**
-     * 2.2.1：启动区点按 = 直接进窗户（VMOS 语义：应用活在虚拟屏）。
-     * 冷启动到虚拟屏 + 浮窗全开 + 验证；失败自动降级普通全屏启动。
-     */
-    public void launchInWindow(final String pkg) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    int did = VirtualScreen.ensure(FloatingService.this);
-                    if (did < 0) {
-                        VBox.launch(FloatingService.this, pkg, 0);
-                        return;
-                    }
-                    int res = VBox.launchToDisplay(FloatingService.this, pkg, 0, did);
-                    if (res != 0) {
-                        VBox.launch(FloatingService.this, pkg, 0);
-                        return;
-                    }
-                    new android.os.Handler(android.os.Looper.getMainLooper())
-                            .post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mGuestOpen = true;
-                                    buildWinV2();
-                                    animWinV2Width(mScreenW);
-                                    ballAnimTo(0);
-                                    verifyV2Async(did);
-                                }
-                            });
-                } catch (Throwable t) {
-                    TLog.e("Float", "launchInWindow fail", t);
-                }
-            }
-        }, "tb-v2-liw").start();
-    }
-
-    /** 建浮窗：TYPE_APPLICATION_OVERLAY，右缘贴边，TextureView 铺满。 */
-    private void buildWinV2() {
-        if (mWinV2 != null) {
-            return;
-        }
-        mWinV2 = new android.widget.FrameLayout(this);
-        mWinV2.setBackgroundColor(0xFF06080D);
-        mWinTexture = new android.view.TextureView(this);
-        // 2.2.0：触摸直派通道（AIDL）下一版接入；本版点击给明确提示，
-        // 收回/拖动/全开已可用。把手在浮窗之上（beginWinDrag 置顶）。
-        mWinTexture.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Toast.makeText(FloatingService.this,
-                        "浮窗模式：拖把手收回窗户。直接操作画面将在下版支持",
-                        Toast.LENGTH_SHORT).show();
-            }
-        });
-        mWinTexture.setClickable(true);
-        mWinV2.addView(mWinTexture, new android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
-        mWinTexture.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
-            @Override
-            public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int h) {
-                VirtualScreen.bindSurface(mWinTexture);
-                TLog.i("Float", "v2: texture available " + w + "x" + h);
-            }
-
-            @Override
-            public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int h) {
-            }
-
-            @Override
-            public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) {
-                return true;
-            }
-
-            @Override
-            public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {
-            }
-        });
-        mWinV2Lp = new WindowManager.LayoutParams(
-                mScreenW, mScreenH,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.OPAQUE);
-        mWinV2Lp.gravity = Gravity.TOP | Gravity.START;
-        mWinV2Lp.x = mScreenW;   // 全宽窗体停在屏外右侧，translation 滑入
-        mWinV2Lp.y = 0;
-        try {
-            mWm.addView(mWinV2, mWinV2Lp);
-            mWinV2On = true;
-        } catch (Throwable t) {
-            TLog.e("Float", "v2 addView fail", t);
-            mWinV2 = null;
-        }
-    }
-
-    /**
-     * v2 窗户展开量（2.2.2：窗体固定全宽停屏外，translation 滑入——零 binder，
-     * 拖动丝滑；TextureView 恒定全尺寸，guest 无重排）。
-     * @param amount 可见宽度（0=全收，mScreenW=全开）
-     */
-    private void setWinV2Progress(int amount) {
-        if (!mWinV2On || mWinV2 == null) {
-            return;
-        }
-        int a = Math.max(0, Math.min(mScreenW, amount));
-        mWinV2.setTranslationX(-a);
-    }
-
-    /**
-     * 首帧验证：3.5s 内 TextureView 有内容（SurfaceTexture timestamp 前进）
-     * → v2 生效（撤窗帘，浮窗接管）；无帧 → v2 死（launch 没到虚拟屏 /
-     * OEM 拒 setLaunchDisplayId）→ 撤浮窗，降级 v1（窗帘 + task 切换）。
-     */
-    private void verifyV2Async(final int displayId) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    final long t0 = textureTimestamp();
-                    long t = t0;
-                    // 2.2.2：1.8s（原 3.5s 太久——拖一下等 3.5s 的窗帘=“很难用”）
-                    for (int i = 0; i < 18; i++) {
-                        android.os.SystemClock.sleep(100);
-                        t = textureTimestamp();
-                        if (t > t0 && t > 0) {
-                            break;
-                        }
-                    }
-                    final boolean live = t > 0 && t > t0;
-                    TLog.i("Float", "v2 verify: display=" + displayId
-                            + " t0=" + t0 + " t=" + t + " live=" + live);
-                    new android.os.Handler(android.os.Looper.getMainLooper())
-                            .post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    if (live) {
-                                        mV2Ready = true;
-                                        // 窗帘功成身退：v2 画面接管
-                                        safeRemoveCurtain();
-                                        int visX2 = mDrawerLp.x + (int) mDrawer.getTranslationX();
-                                        setWinV2Progress(mScreenW - visX2);
-                                        Toast.makeText(FloatingService.this,
-                                                "已进入浮窗模式（画面来自虚拟屏）",
-                                                Toast.LENGTH_SHORT).show();
-                                    } else {
-                                        sLastV2Fail = android.os.SystemClock.uptimeMillis();
-                                        destroyWinV2();
-                                        // v1 接管：窗帘在，task 拉前
-                                        mBeneathTaskId = captureBeneathTask();
-                                        bringGuestRobust();
-                                    }
-                                }
-                            });
-                } catch (Throwable t) {
-                    TLog.w("Float", "verifyV2 fail: " + t);
-                }
-            }
-        }, "tb-v2-verify").start();
-    }
-
-    private long textureTimestamp() {
-        try {
-            if (mWinTexture != null && mWinTexture.getSurfaceTexture() != null) {
-                return mWinTexture.getSurfaceTexture().getTimestamp();
-            }
-        } catch (Throwable ignore) {
-        }
-        return 0;
-    }
-
-    /** v2 撤收（验证失败 / 用户关窗户功能）。guest task 已发去虚拟屏，
-     *  验证失败说明它没上去（还在主屏 task 或死了），v1 的 bringGuestRobust 会拉它。 */
-    private void destroyWinV2() {
-        if (mWinV2On && mWinV2 != null) {
-            try {
-                mWm.removeView(mWinV2);
-            } catch (Throwable ignore) {
+        if (!moved) {
+            if (mWinOpen) {
+                winClose();      // 全开态点球：一键收回
+            } else if (!mMenuEatenOnDown) {
+                toggleMenu();
             }
         }
-        mWinV2 = null;
-        mWinTexture = null;
-        mWinV2On = false;
-        mV2Ready = false;
-        TLog.i("Float", "v2 destroyed (fallback or close)");
+        // 松手停原位（Demo v1.8 拍板：不贴边）
+        mDragging = false;
+        mMenuEatenOnDown = false;
+        return true;
     }
 
-    /**
-     * 2.1.73：拉出前记一下当前前台 task（= 窗户底下的界面）。
-     * getRunningTasks 只能看到自己 uid 的 task（guest 以宿主 stub 名义注册，
-     * 同 uid 可见）——拿得到宿主自己的；拿不到（别的 app/桌面）返回 -1，
-     * 收回时走 HOME 兜底。
-     * 2.1.74（DeepSeek 知识）：guest 的 stub task 也是 dev.twinbox.app 包名
-     * （StubActivity 跑在宿主进程）——按包名过滤会撞名，但这里按 taskId 恢复
-     * 天然免疫：窗户底下是另一个 guest 就恢复那个 guest（用户当时看的界面）。
-     */
-    private int captureBeneathTask() {
-        try {
-            android.app.ActivityManager am =
-                    (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-            List<android.app.ActivityManager.RunningTaskInfo> l = am.getRunningTasks(1);
-            if (l != null && !l.isEmpty() && l.get(0).taskId != mPullTaskId) {
-                return l.get(0).taskId;
-            }
-        } catch (Throwable t) {
-            TLog.w("Float", "captureBeneath fail: " + t);
-        }
-        return -1;
-    }
+    // ---------------------------------------------------------------- 窗户开合（绑定动画：窗带球走）
 
-    /**
-     * 2.1.73：拉出健壮化（修「透明界面」）。
-     * 根因：moveTaskToFront 对被系统冻结（o-stop）/已死的 task 无效——task
-     * 拉回来了但进程不恢复 → 透明。策略：
-     *  1) 系统侧 task 已不存在 → 直接 VBox.launch 重启（窗帘盖着启动过程）；
-     *  2) move 后 2.4s 内没到前台 → 再补一次 launch（冷恢复慢/被冻结）。
-     * 后台线程跑，不卡手势。
-     */
-    private void bringGuestRobust() {
-        final int taskId = mPullTaskId;
-        final String pkg = mPullPkg;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    android.app.ActivityManager am =
-                            (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-                    boolean alive = false;
-                    try {
-                        for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
-                            android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
-                            if (ri != null && ri.taskId == taskId) {
-                                alive = true;
-                                break;
-                            }
-                        }
-                    } catch (Throwable ignore) {
-                    }
-                    if (alive) {
-                        try {
-                            am.moveTaskToFront(taskId, android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
-                            TLog.i("Float", "win: moveTaskToFront " + taskId);
-                        } catch (Throwable tMove) {
-                            // 2.2.1：ColorOS 对 stub task 的 moveTaskToFront 直接
-                            // 抛 NPE（真机日志实锤）——不能让它炸掉整个恢复线程，
-                            // 下面确认循环 + relaunch 兜底会接着处理。
-                            TLog.w("Float", "moveTaskToFront failed (ColorOS?): "
-                                    + tMove + " → fallback launch");
-                            if (pkg != null && pkg.length() > 0) {
-                                VBox.launch(FloatingService.this, pkg, 0);
-                                return;
-                            }
-                        }
-                    } else if (pkg != null && pkg.length() > 0) {
-                        TLog.w("Float", "win: task " + taskId + " gone → relaunch " + pkg);
-                        VBox.launch(FloatingService.this, pkg, 0);
-                        return; // launch 链自带恢复
-                    }
-                    // 确认循环：最多 2.4s
-                    for (int i = 0; i < 12 && !isGuestFront(); i++) {
-                        android.os.SystemClock.sleep(200);
-                    }
-                    if (!isGuestFront() && pkg != null && pkg.length() > 0) {
-                        TLog.w("Float", "win: not front after 2.4s → relaunch " + pkg);
-                        VBox.launch(FloatingService.this, pkg, 0);
-                    }
-                } catch (final Throwable t) {
-                    TLog.e("Float", "bringGuestRobust fail", t);
-                }
-            }
-        }, "tb-win").start();
-    }
-
-    private void showCurtain() {
-        if (mCurtain == null) {
-            mCurtain = new android.widget.FrameLayout(this);
-            mCurtain.setBackgroundColor(0xF20E1117);
-            mCurtainTitle = new TextView(this);
-            mCurtainTitle.setTextColor(0xFFC8D3F0);
-            mCurtainTitle.setTextSize(22);
-            android.widget.FrameLayout.LayoutParams lp1 =
-                    new android.widget.FrameLayout.LayoutParams(
-                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, 17 /*CENTER*/);
-            mCurtain.addView(mCurtainTitle, lp1);
-            mCurtainHint = new TextView(this);
-            mCurtainHint.setTextColor(0xFF7A86A8);
-            mCurtainHint.setTextSize(13);
-            android.widget.FrameLayout.LayoutParams lp2 =
-                    new android.widget.FrameLayout.LayoutParams(
-                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, 49 /*TOP|CH*/);
-            lp2.topMargin = (int) (48 * getResources().getDisplayMetrics().density);
-            mCurtain.addView(mCurtainHint, lp2);
-            mCurtainLp = new WindowManager.LayoutParams(
-                    mScreenW, mScreenH,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT);
-            mCurtainLp.gravity = Gravity.TOP | Gravity.LEFT;
-            mCurtainLp.x = 0;
-            mCurtainLp.y = 0;
-        }
-        mCurtainTitle.setText(mPullLabel == null || mPullLabel.isEmpty() ? "容器应用" : mPullLabel);
-        mCurtainHint.setText(mWinPullOut ? "‹ 继续向左拖出 · 松手全屏打开" : "继续向右拖 · 松手收起 ›");
-        // 2.1.73：先定位再上屏——修「addView 瞬间 translationX=0 全屏黑一帧」闪现
-        mCurtain.setTranslationX(mWinPullOut ? mDrawerLp.x : mDrawerLp.x - mScreenW);
-        if (!mCurtainOn) {
-            try {
-                mWm.addView(mCurtain, mCurtainLp);
-                mCurtainOn = true;
-            } catch (Throwable t) {
-                TLog.e("Float", "curtain addView fail", t);
-            }
-        }
-        // 初始位（当前球位）
-        setCurtainPos(mWinPullOut ? mDrawerLp.x : mDrawerLp.x - mScreenW);
-    }
-
-    private void setCurtainPos(float tx) {
-        if (mCurtainOn && mCurtain != null) {
-            mCurtain.setTranslationX(tx);
-        }
-    }
-
-    /** 窗帘滑出屏幕后移除。 */
-    private void dropCurtain(float endTx) {
-        if (!mCurtainOn || mCurtain == null) {
-            return;
-        }
-        try {
-            android.animation.ObjectAnimator a = android.animation.ObjectAnimator
-                    .ofFloat(mCurtain, "translationX", mCurtain.getTranslationX(), endTx);
-            a.setDuration(220);
-            a.setInterpolator(new DecelerateInterpolator());
-            a.addListener(new android.animation.Animator.AnimatorListener() {
-                @Override
-                public void onAnimationEnd(android.animation.Animator animation) {
-                    safeRemoveCurtain();
-                }
-
-                @Override
-                public void onAnimationStart(android.animation.Animator animation) {
-                }
-
-                @Override
-                public void onAnimationCancel(android.animation.Animator animation) {
-                }
-
-                @Override
-                public void onAnimationRepeat(android.animation.Animator animation) {
-                }
-            });
-            a.start();
-        } catch (Throwable t) {
-            safeRemoveCurtain();
-        }
-    }
-
-    private void safeRemoveCurtain() {
-        if (mCurtainOn && mCurtain != null) {
-            try {
-                if (mCurtain.isAttachedToWindow()) {
-                    mWm.removeView(mCurtain);
-                }
-            } catch (Throwable t) {
-                TLog.w("Float", "remove curtain fail: " + t);
-            }
-        }
-        mCurtainOn = false;
-    }
-
-    /** 窗户全开：v2=浮窗铺满（主屏 task 不动）；v1=应用真全屏+球贴左缘。 */
     private void winOpen() {
-        mGuestOpen = true;
-        if (mV2Ready && mWinV2On) {
-            // v2：浮窗一步铺满（可加动画），底下界面原样
-            animWinV2Width(mScreenW);
-            ballAnimTo(0);
-            return;
+        mWinOpen = true;
+        if (mWinLp.width == 0) {
+            setWinProgress(0);
+            setWinActive(true);
         }
-        ballAnimTo(0);
-        dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
-        // 2.1.74（DeepSeek 合并）：全开前验证 guest 真到前台了。bringGuestRobust
-        // 拉出时就开跑（含 2.4s 确认循环），这里只兜最坏情况：验证失败再增援一次，
-        // 仍失败 → abort（球回右缘、面板恢复、窗帘撤掉）——绝不出现
-        // 「球贴左缘+窗帘全开+底下没应用」的死态。
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    android.os.SystemClock.sleep(300);
-                    if (isGuestFront()) {
-                        return;
-                    }
-                    bringGuestRobust();   // 增援（内部有验活/重启/确认循环）
-                    android.os.SystemClock.sleep(1200);
-                    if (!isGuestFront()) {
-                        new android.os.Handler(android.os.Looper.getMainLooper())
-                                .post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        abortWinDrag("guest not front after retry");
-                                    }
-                                });
-                    }
-                } catch (Throwable ignore) {
-                }
-            }
-        }, "tb-win-verify").start();
+        mVmView.reload();
+        winAnimTo(mScreenW);
     }
 
-    /** v2 窗户展开量动画（translation，零 binder）。 */
-    private void animWinV2Width(final int targetAmount) {
-        if (!mWinV2On || mWinV2 == null) {
-            return;
-        }
-        cancelSnap();
-        final int from = -(int) mWinV2.getTranslationX();
-        mSnapAnim = ValueAnimator.ofInt(from, targetAmount);
-        mSnapAnim.setDuration(240);
-        mSnapAnim.setInterpolator(new DecelerateInterpolator());
-        mSnapAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(ValueAnimator animation) {
-                setWinV2Progress((Integer) animation.getAnimatedValue());
-            }
-        });
-        mSnapAnim.start();
-    }
-
-    /** 窗户异常中止：v2=撤浮窗；球回右缘、面板恢复、窗帘撤掉。 */
-    private void abortWinDrag(String why) {
-        if (!mGuestOpen) {
-            return;
-        }
-        TLog.w("Float", "win abort: " + why);
-        mGuestOpen = false;
-        if (mV2Ready) {
-            destroyWinV2();
-        }
-        // 窗户底下还是原界面（guest 没上来过），直接撤
-        ballAnimTo(edgeX());
-        safeRemoveCurtain();
-        View panel = mDrawer.findViewById(R.id.drawer_panel);
-        if (panel != null) {
-            panel.setVisibility(View.VISIBLE);
-        }
-    }
-
-    /** 窗户收回：v2=浮窗收起（guest 留虚拟屏跑，底下界面原样不动）；
-     *  v1=应用送后台（恢复窗户底下的 task）。 */
     private void winClose() {
-        mGuestOpen = false;
-        if (mV2Ready && mWinV2On) {
-            // v2：浮窗收到右缘（宽度→1 挂屏外），guest 继续在虚拟屏跑
-            animWinV2Width(1);
-            ballAnimTo(edgeX());
-            // 2.2.1：面板保持 GONE（关窗后菜单收着，点球再开——VMOS 同款）
-            TLog.i("Float", "v2: window closed, guest stays on virtual display");
-            return;
-        }
-        // 2.1.73：恢复「窗户底下的界面」（拉出前记的 task / HOME 兜底），
-        // 绝不拉宿主主界面——用户反馈：收回后见到的应是原来的界面。
-        restoreBeneath();
-        ballAnimTo(edgeX());
-        dropCurtain(mWinPullOut ? mScreenW : -mScreenW);
-        // 2.2.1：面板保持 GONE（点球再开菜单）
+        mWinOpen = false;
+        winAnimTo(0);
     }
 
-    /**
-     * 2.1.73：收回时恢复窗户底下的界面。
-     * - 拉出前记到的 task（宿主 uid 内可见）→ move 回来；
-     * - 记不到（窗户下面是桌面/别的 app）→ 发 HOME 回桌面，
-     *   launcher 起来把 guest 挤后台。窗帘盖着整个切换，无感。
-     */
-    private void restoreBeneath() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (mBeneathTaskId >= 0) {
-                        android.app.ActivityManager am =
-                                (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-                        boolean alive = false;
-                        try {
-                            for (android.app.ActivityManager.AppTask t : am.getAppTasks()) {
-                                android.app.ActivityManager.RecentTaskInfo ri = t.getTaskInfo();
-                                if (ri != null && ri.taskId == mBeneathTaskId) {
-                                    alive = true;
-                                    break;
-                                }
-                            }
-                        } catch (Throwable ignore) {
-                        }
-                        if (alive) {
-                            am.moveTaskToFront(mBeneathTaskId,
-                                    android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
-                            TLog.i("Float", "win: beneath task " + mBeneathTaskId + " restored");
-                            return;
-                        }
-                    }
-                    // HOME 兜底：回桌面（不拉宿主主界面）
-                    Intent home = new Intent(Intent.ACTION_MAIN);
-                    home.addCategory(Intent.CATEGORY_HOME);
-                    home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(home);
-                    TLog.i("Float", "win: HOME (beneath restore fallback)");
-                } catch (Throwable t) {
-                    TLog.w("Float", "restoreBeneath fail: " + t);
-                }
-            }
-        }, "tb-win-close").start();
-    }
-
-    /**
-     * 窗户目标预取/刷新（2.1.74 合并自 DeepSeek：带节流）。
-     * 返回本次拿到的运行列表，调用方直接复用，不要再自己调 VBox.runningTasks()
-     * ——那会多打一次引擎 IPC。
-     *
-     * @param force true=强制刷新；false=按节流间隔（连续拖动手势不打爆引擎）
-     */
-    private List<com.lody.virtual.remote.AppTaskInfo> refreshRunCache(boolean force) {
-        List<com.lody.virtual.remote.AppTaskInfo> r = mRunCache;
-        long now = android.os.SystemClock.uptimeMillis();
-        if (!force && r != null && now - mRunCacheAt < RUN_CACHE_TTL_MS) {
-            return r;   // 节流命中：沿用上次结果
+    /** 窗户露出量动画；动画结束窗口熄灭（被手势打断则不熄，Demo v1.2）。 */
+    private void winAnimTo(final int targetAmount) {
+        if (mWinAnim != null) {
+            mWinAnim.cancel();
         }
-        try {
-            r = VBox.runningTasks();
-            mRunCacheAt = now;
-            mRunCache = r;   // 2.1.75：合并时漏了这行——mRunCache 恒 null → hasGuest 恒 false → 窗户永不触发
-            if (!r.isEmpty()) {
-                // 当前目标还在列表里就不换（窗户目标稳定）
-                boolean keep = false;
-                for (com.lody.virtual.remote.AppTaskInfo ti : r) {
-                    if (ti.taskId == mPullTaskId) {
-                        keep = true;
-                        break;
-                    }
-                }
-                if (!keep) {
-                    com.lody.virtual.remote.AppTaskInfo t0 = r.get(0);
-                    mPullTaskId = t0.taskId;
-                    String pkg = t0.baseIntent != null && t0.baseIntent.getComponent() != null
-                            ? t0.baseIntent.getComponent().getPackageName()
-                            : (t0.topActivity != null ? t0.topActivity.getPackageName() : "?");
-                    mPullPkg = pkg == null ? "" : pkg;
-                    String label = mLabelByPkg != null ? mLabelByPkg.get(pkg) : null;
-                    mPullLabel = label != null ? label : pkg;
-                }
-            } else {
-                mPullTaskId = -1;
-            }
-        } catch (Throwable t) {
-            TLog.w("Float", "refreshRunCache fail: " + t);
-        }
-        if (r == null) {
-            r = new ArrayList<com.lody.virtual.remote.AppTaskInfo>();
-        }
-        return r;
-    }
-
-    /** 球位动画（不触发 fillPanel）。 */
-    private void ballAnimTo(final int targetX) {
-        cancelSnap();
-        final int from = mDrawerLp.x;
-        mSnapAnim = ValueAnimator.ofInt(from, targetX);
-        mSnapAnim.setDuration(220);
-        mSnapAnim.setInterpolator(new DecelerateInterpolator());
-        mSnapAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+        final int from = (int) (mScreenW - mWin.getTranslationX());
+        ValueAnimator a = ValueAnimator.ofInt(from, targetAmount);
+        a.setDuration(220);
+        a.setInterpolator(new DecelerateInterpolator());
+        a.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator animation) {
-                mDrawerLp.x = (Integer) animation.getAnimatedValue();
-                applyLayout();
+                int amount = (Integer) animation.getAnimatedValue();
+                setWinProgress(amount);
+                // 绑定语义：球左缘 = 屏宽 − 露出量（窗带球走，Demo v1.14）
+                moveBallTo(mScreenW - amount, mBallLp.y);
             }
         });
-        mSnapAnim.start();
-    }
-
-    /** 容器应用 task 是否在前台（自己 uid 的 task 对 getRunningTasks 可见）。 */
-    private boolean isGuestFront() {
-        try {
-            android.app.ActivityManager am =
-                    (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-            List<android.app.ActivityManager.RunningTaskInfo> l = am.getRunningTasks(1);
-            return mPullTaskId >= 0 && l != null && !l.isEmpty()
-                    && l.get(0).taskId == mPullTaskId;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    /** 吸附动画（Decelerate，200ms）+ 箭头态切换 */
-    private void snapTo(final int targetX) {
-        cancelSnap();
-        final int from = mDrawerLp.x;
-        final boolean opening = targetX <= (edgeX() + openX()) / 2;
-        mSnapAnim = ValueAnimator.ofInt(from, targetX);
-        mSnapAnim.setDuration(200);
-        mSnapAnim.setInterpolator(new DecelerateInterpolator());
-        mSnapAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(ValueAnimator animation) {
-                mDrawerLp.x = (Integer) animation.getAnimatedValue();
-                applyLayout();
-            }
-        });
-        mSnapAnim.addListener(new android.animation.Animator.AnimatorListener() {
-            @Override
-            public void onAnimationEnd(android.animation.Animator animation) {
-                // TwinBox 2.1.65：每次展开时实时刷新面板——fillPanel 原先
-                // 只在 onCreate 调一次，用户「先开悬浮球再启动应用」时
-                // 拖出的面板里「运行中」区还是旧数据（空），小窗调出
-                // 根本无处可点（真机日志实锤：全程零 moveTaskToFront）。
-                if (opening) {
-                    fillPanel();
-                }
-            }
-
-            @Override
-            public void onAnimationStart(android.animation.Animator animation) {
-            }
-
+        final boolean[] cancelled = {false};
+        a.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationCancel(android.animation.Animator animation) {
+                cancelled[0] = true;
             }
 
             @Override
-            public void onAnimationRepeat(android.animation.Animator animation) {
+            public void onAnimationEnd(android.animation.Animator animation) {
+                if (!cancelled[0] && !mWinOpen) {
+                    setWinActive(false);
+                }
             }
         });
-        mSnapAnim.start();
-        // 箭头：展开态 ›（向右推回）；贴边态 ‹（向左拉出）
+        mWinAnim = a;
+        a.start();
     }
 
-    private void cancelSnap() {
-        if (mSnapAnim != null) {
-            mSnapAnim.cancel();
-            mSnapAnim = null;
-        }
-    }
+    // ---------------------------------------------------------------- VmScreenView 回调
 
-    private void applyLayout() {
+    @Override
+    public void onLaunchApp(String pkg, int userId) {
+        // 窗户里点应用：主屏启动容器应用 + 收窗（画面层是自绘网格，
+        // 应用本体跑在主屏——不需要投影/虚拟屏）。
         try {
-            mWm.updateViewLayout(mDrawer, mDrawerLp);
+            VBox.launch(this, pkg, userId);
         } catch (Throwable t) {
-            TLog.w("Float", "updateViewLayout fail: " + t);
+            TLog.e(TAG, "launch fail: " + pkg, t);
+            Toast.makeText(this, "启动失败：" + t, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        winClose();
+    }
+
+    // ---------------------------------------------------------------- 菜单
+
+    private void toggleMenu() {
+        if (mMenu != null && mMenu.isAttachedToWindow()) {
+            hideMenu();
+            return;
+        }
+        mMenu = (LinearLayout) LayoutInflater.from(this)
+                .inflate(R.layout.floating_menu, null, false);
+        LinearLayout box = (LinearLayout) mMenu.findViewById(R.id.panel_items);
+        fillMenuItems(box);
+        mMenuLp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                PixelFormat.TRANSLUCENT);
+        mMenuLp.gravity = Gravity.TOP | Gravity.START;
+        // 垂直避让（Demo v1.2）：球上半屏→菜单下方，反之出上方，永不盖球
+        int mw = (int) (240 * getResources().getDisplayMetrics().density);
+        int mh = (int) (430 * getResources().getDisplayMetrics().density);
+        int mx = Math.max(24, Math.min(mScreenW - mw - 24,
+                mBallLp.x + mBallSize / 2 - mw / 2));
+        int my = mBallLp.y > mScreenH / 2 ? mBallLp.y - mh - 40 : mBallLp.y + mBallSize + 40;
+        my = Math.max(24, Math.min(mScreenH - mh - 24, my));
+        mMenuLp.x = mx;
+        mMenuLp.y = my;
+        mMenu.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_OUTSIDE) {
+                    hideMenu();
+                    return true;
+                }
+                return false;
+            }
+        });
+        try {
+            mWm.addView(mMenu, mMenuLp);
+        } catch (Throwable t) {
+            TLog.e(TAG, "menu addView fail", t);
         }
     }
 
-    // ---------------------------------------------------------------- 面板内容
-
-    private void fillPanel() {
-        // 2.2.2：数据收集全部挪后台线程（listInstalled+runningTasks 是两次引擎
-        // binder，主线程跑就是展开卡顿的根源），UI 构建回主线程。
-        TLog.i("Float", "fillPanel: refreshing (async)");
-        final android.content.Context ctx = this;
+    /** 菜单项：运行中（点击=切到前台）+ 启动区（点击=启动）。（后台取数，2.2.2 教训） */
+    private void fillMenuItems(final LinearLayout box) {
+        box.removeAllViews();
         new Thread(new Runnable() {
             @Override
             public void run() {
-                List<VBox.VAppEntry> apps = null;
+                final List<VBox.VAppEntry> apps;
+                final List<String> running = new ArrayList<>();
                 try {
                     apps = VBox.listInstalled();
+                    for (com.lody.virtual.remote.AppTaskInfo t : VBox.runningTasks()) {
+                        if (t != null && t.baseIntent != null
+                                && t.baseIntent.getComponent() != null) {
+                            String p = t.baseIntent.getComponent().getPackageName();
+                            if (!running.contains(p)) {
+                                running.add(p);
+                            }
+                        }
+                    }
                 } catch (Throwable t) {
-                    TLog.e("Float", "listInstalled fail", t);
+                    TLog.w(TAG, "menu data fail: " + t);
+                    return;
                 }
-                final List<VBox.VAppEntry> appsF = apps;
-                final List<com.lody.virtual.remote.AppTaskInfo> runF = refreshRunCache(true);
-                mUi.post(new Runnable() {
+                final List<VBox.VAppEntry> appList =
+                        apps == null ? new ArrayList<VBox.VAppEntry>() : apps;
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
-                        buildPanelViews(ctx, appsF, runF);
+                        buildMenuRows(box, appList, running);
                     }
                 });
             }
-        }, "tb-fill").start();
+        }, "tb-menu-fill").start();
     }
 
-    /** 面板 UI 构建（主线程）。数据已由 fillPanel 后台备好。 */
-    private void buildPanelViews(android.content.Context ctx, List<VBox.VAppEntry> apps,
-                                 List<com.lody.virtual.remote.AppTaskInfo> running) {
-        LinearLayout box = (LinearLayout) mDrawer.findViewById(R.id.panel_items);
-        box.removeAllViews();
-
-        // ---- 运中区 + 窗户目标缓存（数据由后台线程传入） ----
-        if (running == null) {
-            running = new ArrayList<com.lody.virtual.remote.AppTaskInfo>();
+    private void buildMenuRows(LinearLayout box, List<VBox.VAppEntry> apps, List<String> running) {
+        if (mMenu == null) {
+            return; // 数据回来前菜单已被关
         }
         if (!running.isEmpty()) {
             TextView head = new TextView(this);
-            head.setText("运行中 · 点按打开 · 拖把手拉出");
+            head.setText("运行中");
             head.setTextColor(0xFF8A93A8);
             head.setTextSize(12);
-            head.setPadding(28, 22, 28, 6);
+            head.setPadding(28, 16, 28, 6);
             box.addView(head);
-            java.util.Map<String, VBox.VAppEntry> byPkg = new java.util.HashMap<String, VBox.VAppEntry>();
-            if (apps != null) {
+            for (final String pkg : running) {
+                VBox.VAppEntry hit = null;
                 for (VBox.VAppEntry e : apps) {
-                    byPkg.put(e.packageName, e);
-                    if (e.label != null) {
-                        mLabelByPkg.put(e.packageName, e.label);
+                    if (pkg.equals(e.packageName)) {
+                        hit = e;
+                        break;
                     }
                 }
-            }
-            int shownRun = 0;
-            for (final com.lody.virtual.remote.AppTaskInfo ti : running) {
-                if (shownRun >= 5) {
-                    break;
-                }
-                String pkg = ti.baseIntent != null && ti.baseIntent.getComponent() != null
-                        ? ti.baseIntent.getComponent().getPackageName()
-                        : (ti.topActivity != null ? ti.topActivity.getPackageName() : "?");
-                VBox.VAppEntry e = byPkg.get(pkg);
-                String label = e != null && e.label != null ? e.label : pkg;
+                final String label = hit != null && hit.label != null ? hit.label : pkg;
                 TextView item = new TextView(this);
-                item.setText(label);
-                item.setTextColor(0xFF5B8CFF);
-                item.setPadding(28, 22, 28, 22);
+                item.setText("● " + label);
+                item.setTextColor(0xFF35D07F);
                 item.setTextSize(14);
-                // 点按 = 全屏打开（2.1.72：去掉小窗 toggle——用户要的是全屏）
-                final String pkg0 = pkg;
+                item.setPadding(28, 20, 28, 20);
                 item.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        // 2.2.1：启动即进窗户（虚拟屏），失败自动降级全屏
-                        launchInWindow(pkg0);
-                        snapTo(edgeX());
+                        hideMenu();
+                        try {
+                            VBox.launch(FloatingService.this, pkg, 0);
+                        } catch (Throwable t) {
+                            TLog.e(TAG, "resume launch fail", t);
+                        }
                     }
                 });
                 box.addView(item);
-                shownRun++;
             }
-        }
-
-        // ---- 启动区（原功能保留）----
-        if (apps == null || apps.isEmpty()) {
-            if (running.isEmpty()) {
-                TextView empty = new TextView(this);
-                empty.setText("容器内暂无应用");
-                empty.setTextColor(0xFF8A93A8);
-                empty.setTextSize(13);
-                empty.setPadding(28, 26, 28, 26);
-                box.addView(empty);
-            }
-            return;
         }
         TextView launchHead = new TextView(this);
         launchHead.setText("启动应用");
@@ -1371,22 +534,30 @@ public class FloatingService extends Service {
         launchHead.setTextSize(12);
         launchHead.setPadding(28, 16, 28, 6);
         box.addView(launchHead);
+        if (apps.isEmpty() && running.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("容器内暂无应用");
+            empty.setTextColor(0xFF8A93A8);
+            empty.setTextSize(13);
+            empty.setPadding(28, 26, 28, 26);
+            box.addView(empty);
+            return;
+        }
         int shown = 0;
         for (final VBox.VAppEntry e : apps) {
-            if (shown >= 9) {
-                break;
+            if (shown >= 8) {
+                break; // 菜单最多 8 个，全量去窗户里看
             }
             TextView item = new TextView(this);
             item.setText(e.label == null ? e.packageName : e.label);
-            item.setTextColor(Color.WHITE);
-            item.setPadding(28, 26, 28, 26);
+            item.setTextColor(0xFFEDF2FF);
             item.setTextSize(14);
+            item.setPadding(28, 20, 28, 20);
             item.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    // 2.2.1：启动即进窗户（虚拟屏），失败自动降级全屏
-                    launchInWindow(e.packageName);
-                    snapTo(edgeX());
+                    hideMenu();
+                    onLaunchApp(e.packageName, e.userId);
                 }
             });
             box.addView(item);
@@ -1394,31 +565,44 @@ public class FloatingService extends Service {
         }
     }
 
+    private void hideMenu() {
+        if (mMenu != null && mMenu.isAttachedToWindow()) {
+            try {
+                mWm.removeView(mMenu);
+            } catch (Throwable ignore) {
+            }
+        }
+        mMenu = null;
+    }
+
+    // ---------------------------------------------------------------- 生命周期
+
     @Override
     public void onDestroy() {
+        sRunning = false;
         super.onDestroy();
-        cancelSnap();
-        if (mPollHandler != null && mPollRunnable != null) {
-            mPollHandler.removeCallbacks(mPollRunnable);
+        if (mWinAnim != null) {
+            mWinAnim.cancel();
         }
-        mPollHandler = null;
-        safeRemoveCurtain();
-        destroyWinV2();
-        VirtualScreen.release();
-        if (mDrawer != null) {
-            try {
-                if (mDrawer.isAttachedToWindow()) {
-                    mWm.removeView(mDrawer);
+        if (mBallAnim != null) {
+            mBallAnim.cancel();
+        }
+        hideMenu();
+        View[] views = {mBall, mWin};
+        for (View v : views) {
+            if (v != null) {
+                try {
+                    if (v.isAttachedToWindow()) {
+                        mWm.removeView(v);
+                    }
+                } catch (Throwable t) {
+                    TLog.w(TAG, "removeView fail: " + t);
                 }
-            } catch (Throwable t) {
-                TLog.w("Float", "removeView drawer fail: " + t);
             }
-            mDrawer = null;
         }
         try {
             stopForeground(true);
         } catch (Throwable ignore) {
         }
-        sRunning = false;
     }
 }
